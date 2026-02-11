@@ -233,6 +233,7 @@ class Traders(models.Model):
 class UserTraders(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='user_traders')
     trader = models.ForeignKey(Traders, on_delete=models.SET_NULL, null=True, blank=True, related_name='trader_user')
+    total = models.IntegerField(default=0)
 
     class Meta:
         verbose_name = 'Трейдеры Юзеров'

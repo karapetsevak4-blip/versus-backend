@@ -32,21 +32,23 @@ def activate_team_boost():
             winner = last_team
             loser = first_team
 
-        g = (winner.money_team / loser.money_team) - 1  # относительный разрыв между командами.
-        rA = winner.money_for_weak  # средний дневной прирост монет лидирующей команды за последнюю неделю.
-        rB = loser.money_for_weak  # средний дневной прирост монет отстающей команды за последнюю неделю.
-        k = 3
-        m_raw = 1 + (g - 0.2) * (rA / rB) / 3
-        m = min(max(m_raw, 1), 1.5)
-        loser.boost_team = m
-        winner.boost_team = 1.0
-        loser.money_for_weak = 0
-        winner.money_for_weak = 0
-        loser.save()
-        winner.save()
-        season.winner_of_weak = winner
-        season.losser_of_weak = loser
-        season.save()
+        g = (winner.money_team / loser.money_team) - 1 if loser.money_team != 0 and winner.money_team != 0 else 'pass'
+        # относительный разрыв между командами.
+        if g != 'pass':
+            rA = winner.money_for_weak  # средний дневной прирост монет лидирующей команды за последнюю неделю.
+            rB = loser.money_for_weak  # средний дневной прирост монет отстающей команды за последнюю неделю.
+            k = 3
+            m_raw = 1 + (g - 0.2) * (rA / rB) / 3
+            m = min(max(m_raw, 1), 1.5)
+            loser.boost_team = m
+            winner.boost_team = 1.0
+            loser.money_for_weak = 0
+            winner.money_for_weak = 0
+            loser.save()
+            winner.save()
+            season.winner_of_weak = winner
+            season.losser_of_weak = loser
+            season.save()
         print('Недельный бонус проигравшей команде активировался')
 
 
@@ -62,6 +64,8 @@ def calculate_personal_money():
         first_team.save()
         last_team.save()
         for user_balance in UserBalance.objects.select_related('team', 'user').all():
+            if not user_balance.team:
+                continue
             boost = user_balance.team.boost_team
             salary = 0
             earn = 0
@@ -150,8 +154,10 @@ def create_team_stats():
                 for i in person.my_ofice.traders.all():
                     len_of_traders += 1
                     salary += i.trader.earn_for_day
+                    i.total += i.trader.earn_for_day * (1 + person.my_ofice.ofice.comfort)
+                    i.save()
                 productivity_per_day += salary * (1 + person.my_ofice.ofice.comfort)
-            TeamStats.objects.acreate(team=i, total_coins=old_stats.total_coins,
+            TeamStats.objects.create(team=i, total_coins=old_stats.total_coins,
                                       productivity_per_day=old_stats.productivity_per_day / old_stats.total_players if old_stats.total_players != 0 else 0,
                                       total_players=old_stats.total_players, total_traders=len_of_traders)
     else:

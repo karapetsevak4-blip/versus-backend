@@ -45,7 +45,7 @@ class UserTradersSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserTraders
-        fields = ['trader']
+        fields = ['trader','total']
 
 
 class OficeSerializer(serializers.ModelSerializer):
