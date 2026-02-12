@@ -401,7 +401,7 @@ async def claim_bank(request: HttpRequest, *args, **kwargs):
     responses={
         '404': get_response_examples({'Error': 'У вас нет команды'}),
         ' 404': get_response_examples({'Error': 'У вас нет монет для сбора'}),
-        '200': get_response_examples({'Info': 'Операция прошла успешно'}),
+        '200': get_response_examples(schema=response_serializer.ShopSerializer),
     },
     tags=['SHOP'],
     operation_summary='Получить список покупок',
