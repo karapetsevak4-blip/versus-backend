@@ -478,6 +478,7 @@ async def buy_something(request, *args, **kwargs):
     user = kwargs.get('user')
 
     model = request.data.get('model')
+    count = int(request.data.get('count', 1))
     id_products = request.data.get('id_products')
 
     if not model or not id_products:
@@ -488,14 +489,16 @@ async def buy_something(request, *args, **kwargs):
         if not trader:
             return JsonResponse({'Error': 'Данный продукт не найден'}, status=404)
 
-        if trader.currency.name.lower() == 'stars' and user_balance.token_money >= trader.price:
-            user_trader = await UserTraders.objects.acreate(user=user, trader=trader)
-            await user_balance.list_of_my_traders.aadd(user_trader)
-            user_balance.token_money -= trader.price
-        elif trader.currency.name.lower() == 'coin' and user_balance.game_coin >= trader.price:
-            user_trader = await UserTraders.objects.acreate(user=user, trader=trader)
-            await user_balance.list_of_my_traders.aadd(user_trader)
-            user_balance.game_coin -= trader.price
+        if trader.currency.name.lower() == 'stars' and user_balance.token_money >= trader.price * count:
+            for i in range(count):
+                user_trader = await UserTraders.objects.acreate(user=user, trader=trader)
+                await user_balance.list_of_my_traders.aadd(user_trader)
+            user_balance.token_money -= trader.price * count
+        elif trader.currency.name.lower() == 'coin' and user_balance.game_coin >= trader.price * count:
+            for i in range(count):
+                user_trader = await UserTraders.objects.acreate(user=user, trader=trader)
+                await user_balance.list_of_my_traders.aadd(user_trader)
+            user_balance.game_coin -= trader.price * count
         else:
             return JsonResponse({'Error': 'У вас недостаточно денег'}, status=404)
 
