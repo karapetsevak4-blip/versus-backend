@@ -40,12 +40,21 @@ class TradersSerializer(serializers.ModelSerializer):
         return os.getenv('BACK_URL') + url
 
 
+
 class UserTradersSerializer(serializers.ModelSerializer):
     trader = TradersSerializer()
+    isActive = serializers.SerializerMethodField()
 
     class Meta:
         model = UserTraders
-        fields = ['trader','total']
+        fields = ['id','trader','total','isActive']
+
+    def get_isActive(self, obj):
+        my_traders = self.context.get('my_traders')
+        if obj.id in my_traders:
+            return True
+        else:
+            return False
 
 
 class OficeSerializer(serializers.ModelSerializer):
@@ -74,6 +83,7 @@ class UserBalanceSerializer(serializers.ModelSerializer):
         fields = ['id', 'token_money', 'game_coin', 'team', 'can_change_team_for_pay', 'my_ofice', 'my_bank',
                   'earn_in_team_per_month', 'price_per_change_team', 'earn_in_team_per_weak', 'list_of_my_traders',
                   'your_share_in_team']
+
 
     def get_your_share_in_team(self, obj):
         if not obj.team:
@@ -179,6 +189,7 @@ class MainPageSerializer(serializers.Serializer):
 class UserOficeSerializer(serializers.ModelSerializer):
     ofice = OficeSerializer()
     traders = UserTradersSerializer(many=True)
+
 
     class Meta:
         model = UserOfice

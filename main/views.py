@@ -175,11 +175,12 @@ async def main_page(request: HttpRequest, *args, **kwargs):
     user_balance = kwargs.get('user_balance')
 
     season = await Season.objects.select_related('first_team', 'second_team').alast()
+    my_traders = [i.id async for i in user_balance.my_ofice.traders.all()]
     data = response_serializer.MainPageSerializer({
         'season': season,
         'user': user,
         'user_balance': user_balance,
-    }).data
+    },context={'my_traders': my_traders}).data
 
     return JsonResponse(data, status=200)
 

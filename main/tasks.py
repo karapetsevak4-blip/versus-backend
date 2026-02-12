@@ -141,24 +141,56 @@ def finish_season(season_id):
 
 @shared_task(acks_late=True, reject_on_worker_lost=True)
 def create_team_stats():
-    from .models import Team, TeamStats, UserBalance, Season
-    season = Season.objects.filter(active=True).afirst()
-    if season:
-        for i in Team.objects.all():
-            old_stats = TeamStats.objects.filter(team=i).first()
-            salary = 0
-            len_of_traders = 0
-            productivity_per_day = 0
-            for person in UserBalance.objects.filter(team=i).prefetch_related('my_ofice__traders').select_related(
-                    'my_ofice__ofice').all():
-                for i in person.my_ofice.traders.all():
-                    len_of_traders += 1
-                    salary += i.trader.earn_for_day
-                    i.total += i.trader.earn_for_day * (1 + person.my_ofice.ofice.comfort)
-                    i.save()
-                productivity_per_day += salary * (1 + person.my_ofice.ofice.comfort)
-            TeamStats.objects.create(team=i, total_coins=old_stats.total_coins,
-                                      productivity_per_day=old_stats.productivity_per_day / old_stats.total_players if old_stats.total_players != 0 else 0,
-                                      total_players=old_stats.total_players, total_traders=len_of_traders)
-    else:
-        pass
+    from .models import Team, TeamStats, UserBalance, Season, UserTraders
+
+    season = Season.objects.filter(active=True).first()
+    if not season:
+        return
+
+    for team in Team.objects.all():
+
+        old_stats = TeamStats.objects.filter(team=team).first()
+
+        total_traders = 0
+        productivity_per_day = 0
+        traders_to_update = []
+
+        user_balances = (
+            UserBalance.objects
+            .filter(team=team)
+            .select_related('my_ofice__ofice')
+            .prefetch_related('my_ofice__traders__trader')
+        )
+
+        for person in user_balances:
+            office = person.my_ofice.ofice
+            comfort_bonus = 1 + office.comfort
+
+            person_salary = 0
+
+            for user_trader in person.my_ofice.traders.all():
+                earn = user_trader.trader.earn_for_day
+
+                person_salary += earn
+                total_traders += 1
+
+                user_trader.total += earn * comfort_bonus
+                traders_to_update.append(user_trader)
+
+            productivity_per_day += person_salary * comfort_bonus
+
+        # Обновляем всех трейдеров одним запросом
+        if traders_to_update:
+            UserTraders.objects.bulk_update(traders_to_update, ['total'])
+
+        TeamStats.objects.create(
+            team=team,
+            total_coins=old_stats.total_coins if old_stats else 0,
+            productivity_per_day=(
+                old_stats.productivity_per_day / old_stats.total_players
+                if old_stats and old_stats.total_players != 0
+                else 0
+            ),
+            total_players=old_stats.total_players if old_stats else 0,
+            total_traders=total_traders,
+        )
