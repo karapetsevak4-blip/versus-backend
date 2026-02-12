@@ -212,10 +212,11 @@ class MyOficeSerializer(serializers.Serializer):
 
 class SpecialOficeSerializer(serializers.ModelSerializer):
     block = serializers.SerializerMethodField()
+    currency = CurrencySerializer()
 
     class Meta:
         model = Ofice
-        fields = ['id', 'lvl', 'count_of_traders', 'comfort', 'safe_capacity', 'block']
+        fields = '__all__'
 
     def get_block(self, obj):
         lvl = self.context.get('my_lvl')
