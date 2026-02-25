@@ -46,6 +46,7 @@ CORS_ALLOWED_ORIGINS = ['http://versuschain.com',
 CSRF_TRUSTED_ORIGINS = ['http://versuschain.com',
                         'https://versuschain.com', 'http://api.versuschain.com', 'https://api.versuschain.com']
 
+CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = list(default_headers)
 SESSION_COOKIE_AGE = 6 * 60 * 60
 # Application definition
