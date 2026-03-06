@@ -526,7 +526,7 @@ async def buy_something(request, *args, **kwargs):
 
         await user_balance.my_ofice.traders.aadd(*traders)
         await user_balance.asave()
-        last_user_ofice = await UserOfice.objects.filter(user=user).alast()
+        last_user_ofice = await UserOfice.objects.filter(user=user).afirst()
         await last_user_ofice.adelete()
         return JsonResponse({'Info': 'Офис удачно куплен'}, status=200)
     else:
