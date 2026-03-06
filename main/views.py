@@ -517,10 +517,14 @@ async def buy_something(request, *args, **kwargs):
             user_ofice = await UserOfice.objects.acreate(user=user, ofice=ofice)
             user_balance.my_ofice = user_ofice
             user_balance.token_money -= ofice.price
+            last_user_ofice = await UserOfice.objects.filter(user=user).alast()
+            await last_user_ofice.adelete()
         elif ofice.currency.name.lower() == 'coin' and user_balance.game_coin >= ofice.price:
             user_ofice = await UserOfice.objects.acreate(user=user, ofice=ofice)
             user_balance.my_ofice = user_ofice
             user_balance.game_coin -= ofice.price
+            last_user_ofice = await UserOfice.objects.filter(user=user).alast()
+            await last_user_ofice.adelete()
 
         else:
             return JsonResponse({'Error': 'У вас недостаточно денег'}, status=404)
