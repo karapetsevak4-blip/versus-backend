@@ -40,6 +40,11 @@ class TradersSerializer(serializers.ModelSerializer):
         return os.getenv('BACK_URL') + url
 
 
+class UserTraderOficeSerializer(serializers.ModelSerializer):
+    trader = TradersSerializer()
+    class Meta:
+        model = UserTraders
+        fields = ['id','trader','total']
 
 class UserTradersSerializer(serializers.ModelSerializer):
     trader = TradersSerializer()
@@ -65,7 +70,7 @@ class OficeSerializer(serializers.ModelSerializer):
 
 class FullMainPAgeOficeSerializer(serializers.ModelSerializer):
     ofice = OficeSerializer()
-    traders = UserTradersSerializer(many=True)
+    traders = UserTraderOficeSerializer(many=True)
 
     class Meta:
         model = UserOfice
