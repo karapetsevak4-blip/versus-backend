@@ -15,6 +15,8 @@ urlpatterns = [
     path('get_data_team/',get_data_team),
     path('info_person/',info_person),
     path('change_nickname/',change_nickname),
+    path('get_invite_link/',get_invite_link),
+    path('get_my_community/',get_my_community),
 
 
 

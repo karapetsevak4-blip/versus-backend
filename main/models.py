@@ -41,7 +41,7 @@ class User(models.Model):
 
 class UserBalance(models.Model):
     user = models.OneToOneField(User, related_name='user_balance', on_delete=models.CASCADE)
-    token_money = models.FloatField(default=0, verbose_name='Монета token (донат) ')
+    token_money = models.FloatField(default=0, verbose_name='Общий баланс донатной валюты')
     game_coin = models.BigIntegerField(default=0, verbose_name='Игровая монета')
     team = models.ForeignKey('Team', null=True, blank=True, on_delete=models.SET_NULL, related_name='user_team',
                              verbose_name='Команда')
@@ -58,6 +58,9 @@ class UserBalance(models.Model):
     list_of_my_traders = models.ManyToManyField('UserTraders', related_name='user_traders', null=True,
                                                 blank=True,
                                                 verbose_name='Мои трейдеры')
+    count_of_share_invite_link = models.IntegerField(default=0)
+    count_of_friends = models.IntegerField(default=0)
+    money_which_i_donate = models.FloatField(default=0, verbose_name='Деньгии которые я задонатил')
 
     class Meta:
         verbose_name = 'Юзеров Баланс '
@@ -71,9 +74,9 @@ class UserBalance(models.Model):
 
 
 class UserStatistics(models.Model):
-    user = models.ForeignKey(User,on_delete=models.CASCADE,related_name='user_stats')
-    received_coins_from_ref= models.IntegerField(default=0)
-    friends_are_inv= models.IntegerField(default=0)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='user_stats')
+    received_coins_from_ref = models.IntegerField(default=0)
+    friends_are_inv = models.IntegerField(default=0)
 
     class Meta:
         verbose_name = 'Статистика Юзеров'
@@ -84,6 +87,7 @@ class UserStatistics(models.Model):
             return f'user_tg_id:{self.user.tg_id},tg_username:{self.user.tg_username}'
         else:
             return ''
+
 
 class Team(models.Model):
     name = models.CharField(verbose_name='Название команды')

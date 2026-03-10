@@ -39,3 +39,54 @@ async def transform_init_data(init_data: str) -> dict:
         return data
     except Exception as e:
         raise ValueError(f"Invalid Telegram Init Data format: {str(e)}")
+
+
+
+async def get_user_referral_layers(user):
+    layers = {
+        'Layer_1': [],
+        'Layer_2': [],
+        'Layer_3': [],
+        'Layer_4': [],
+        'Layer_5': [],
+    }
+
+    counts = {
+        'Layer_1': 0,
+        'Layer_2': 0,
+        'Layer_3': 0,
+        'Layer_4': 0,
+        'Layer_5': 0,
+    }
+
+    current_level_users = [user]
+
+    for level in range(1, 6):
+
+        if not current_level_users:
+            # слой будет пустой, count уже 0
+            continue
+
+        qs = User.objects.filter(
+            referrer__in=current_level_users
+        ).select_related('user_balance')
+
+        next_level_users = []
+
+        async for u in qs:
+            ub = u.user_balance
+
+            layers[f'Layer_{level}'].append({
+                'tg_username': u.tg_username,
+                'Invited': ub.count_of_share_invite_link,
+                'Active': ub.count_of_friends,
+                'Volume_Stars': ub.token_money,
+                'Earned': ub.token_money - ub.money_which_i_donate
+            })
+
+            next_level_users.append(u)
+
+        counts[f'Layer_{level}'] = len(layers[f'Layer_{level}'])
+        current_level_users = next_level_users
+
+    return layers, counts

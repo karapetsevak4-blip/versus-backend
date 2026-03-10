@@ -71,6 +71,7 @@ async def create_my_session(request: HttpRequest):
                 user_stats.friends_are_inv += 1
                 old_person.user_balance.game_coin += 500
                 old_person.user_balance.earn_in_team_per_all_time += 500
+                old_person.user_balance.count_of_friends +=1
                 user_balance.game_coin += 500
                 user_balance.earn_in_team_per_all_time += 500
                 user_stats.received_coins_from_ref += 500
@@ -180,7 +181,7 @@ async def main_page(request: HttpRequest, *args, **kwargs):
         'season': season,
         'user': user,
         'user_balance': user_balance,
-    },context={'my_traders': my_traders}).data
+    }, context={'my_traders': my_traders}).data
 
     return JsonResponse(data, status=200)
 
@@ -654,7 +655,7 @@ async def get_data_team(request: HttpRequest, *args, **kwargs):
         return JsonResponse({'Error': 'Статистика для команд не создана'}, status=404)
 
     if not user_balance.team:
-        return JsonResponse({'Error':'У тебя нет команды'},status=404)
+        return JsonResponse({'Error': 'У тебя нет команды'}, status=404)
     all_day_total_coins_1 = []
     all_day_productivity_per_day_1 = []
     all_day_total_players_1 = []
@@ -787,7 +788,6 @@ async def get_data_team(request: HttpRequest, *args, **kwargs):
             'received_coins_from_referrals': 111,
             'friends_are_inv': 2,
             'total_friends_earnings': 11111,
-            'invite_link': f"https://test.com?start=id_1234543",
         }),
     },
     tags=['User'],
@@ -816,7 +816,6 @@ async def info_person(request: HttpRequest, *args, **kwargs):
         'received_coins_from_referrals': user_stats.received_coins_from_ref,
         'friends_are_inv': user_stats.friends_are_inv,
         'total_friends_earnings': total_friends_earnings,
-        'invite_link': f"{os.getenv('BOT_LINK')}?start=id_{user.tg_id}",
     }
     return JsonResponse(data, status=200)
 
@@ -848,3 +847,92 @@ async def change_nickname(request: HttpRequest, *args, **kwargs):
     await user.asave()
 
     return JsonResponse({'Info': 'NickName успешно заменен'}, status=200)
+
+
+@swagger_auto_schema(
+    methods=(['GET']),
+    responses={
+        '200': get_response_examples({'invite_link': 'https://gfdgsdfgdsaf?start=id_1241'}),
+    },
+    tags=['User'],
+    operation_summary='Получить реферальную ссылку',
+
+)
+@api_view(["GET"])
+@telegram_authenticated
+@check_user_exists
+async def get_invite_link(request: HttpRequest, *args, **kwargs):
+    user = kwargs.get('user')
+    user_balance = kwargs.get('user_balance')
+    user_balance.count_of_share_invite_link += 1
+    await user_balance.asave()
+    return JsonResponse({'invite_link': f"{os.getenv('BOT_LINK')}?start=id_{user.tg_id}"}, status=200)
+
+
+@swagger_auto_schema(
+    methods=(['GET']),
+    responses={
+        '404': get_response_examples({'Error':'Пользователь не закончил онбординг'}),
+        ' 404': get_response_examples(),
+        '200': get_response_examples({
+            "tg_username": "dimon_frolkov",
+                "Invited": 3,
+                "Active": 2,
+                "Volume_Stars": 1000.0,
+                "Earned": 300.0,
+            "Layer_1": [
+                {
+                    "tg_username": "Dima_Tolshin",
+                    "Invited": 1,
+                    "Active": 1,
+                    "Volume_Stars": 500.0,
+                    "Earned": 300.0
+                }
+    ],
+            "Layer_2": [
+                {
+                    "tg_username": "Traher",
+                    "Invited": 0,
+                    "Active": 0,
+                    "Volume_Stars": 400.0,
+                    "Earned": 400.0
+                }
+            ],
+            "Layer_3": [],
+            "Layer_4": [],
+            "Layer_5": [],
+            "Counts": {
+                "Layer_1": 1,
+                "Layer_2": 1,
+                "Layer_3": 0,
+                "Layer_4": 0,
+                "Layer_5": 0
+            }
+                }),
+            },
+    tags=['User'],
+    operation_summary='Сообщество',
+
+)
+@api_view(["GET"])
+@telegram_authenticated
+@check_user_exists
+async def get_my_community(request: HttpRequest, *args, **kwargs):
+    user = kwargs.get('user')
+    user_balance = kwargs.get('user_balance')
+    if not user or not user_balance:
+        return JsonResponse({'Error':'Пользователь не закончил онбординг'},status=404)
+
+    data = {
+        'tg_username': user.tg_username,
+        'Invited': user_balance.count_of_share_invite_link,
+        'Active': user_balance.count_of_friends,
+        'Volume_Stars': user_balance.token_money,
+        'Earned': user_balance.token_money - user_balance.money_which_i_donate,
+    }
+
+    layers, counts = await get_user_referral_layers(user)
+    data.update(layers)
+    data['Counts'] = counts
+
+    return JsonResponse(data,status=200)
