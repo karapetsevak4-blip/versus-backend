@@ -41,7 +41,6 @@ async def transform_init_data(init_data: str) -> dict:
         raise ValueError(f"Invalid Telegram Init Data format: {str(e)}")
 
 
-
 async def get_user_referral_layers(user):
     layers = {
         'Layer_1': [],
@@ -58,11 +57,24 @@ async def get_user_referral_layers(user):
         'Layer_4': 0,
         'Layer_5': 0,
     }
+    total_volume = {
+        'Layer_1': 0,
+        'Layer_2': 0,
+        'Layer_3': 0,
+        'Layer_4': 0,
+        'Layer_5': 0,
+    }
+    total_earned = {
+        'Layer_1': 0,
+        'Layer_2': 0,
+        'Layer_3': 0,
+        'Layer_4': 0,
+        'Layer_5': 0,
+    }
 
     current_level_users = [user]
 
     for level in range(1, 6):
-
         if not current_level_users:
             # слой будет пустой, count уже 0
             continue
@@ -72,21 +84,33 @@ async def get_user_referral_layers(user):
         ).select_related('user_balance')
 
         next_level_users = []
+        level_volume = 0
+        level_earned = 0
 
         async for u in qs:
             ub = u.user_balance
 
+            # Расчет для каждого пользователя
+            volume = ub.token_money if ub else 0
+            earned = (ub.token_money - ub.money_which_i_donate) if ub else 0
+
             layers[f'Layer_{level}'].append({
                 'tg_username': u.tg_username,
-                'Invited': ub.count_of_share_invite_link,
-                'Active': ub.count_of_friends,
-                'Volume_Stars': ub.token_money,
-                'Earned': ub.token_money - ub.money_which_i_donate
+                'Invited': ub.count_of_share_invite_link if ub else 0,
+                'Active': ub.count_of_friends if ub else 0,
+                'Volume_Stars': volume,
+                'Earned': earned
             })
+
+            level_volume += volume
+            level_earned += earned
 
             next_level_users.append(u)
 
         counts[f'Layer_{level}'] = len(layers[f'Layer_{level}'])
+        total_volume[f'Layer_{level}'] = level_volume
+        total_earned[f'Layer_{level}'] = level_earned
+
         current_level_users = next_level_users
 
-    return layers, counts
+    return layers, counts, total_volume, total_earned

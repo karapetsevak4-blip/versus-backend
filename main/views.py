@@ -931,8 +931,10 @@ async def get_my_community(request: HttpRequest, *args, **kwargs):
         'Earned': user_balance.token_money - user_balance.money_which_i_donate,
     }
 
-    layers, counts = await get_user_referral_layers(user)
+    layers, counts, total_volume, total_earned = await get_user_referral_layers(user)
     data.update(layers)
     data['Counts'] = counts
+    data['total_volume'] = total_volume
+    data['total_earned'] = total_earned
 
     return JsonResponse(data,status=200)
