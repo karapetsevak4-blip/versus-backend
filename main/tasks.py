@@ -111,6 +111,11 @@ def finish_season(season_id):
     if not season:
         return
 
+    # An earlier ETA can still execute after the admin extends a season.
+    # The stored end time is authoritative, not the queued job's old ETA.
+    if timezone.now() < season.finish_time:
+        return
+
     t1 = season.first_team
     t2 = season.second_team
     if not t1 or not t2:

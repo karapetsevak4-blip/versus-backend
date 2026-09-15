@@ -5,6 +5,7 @@ from django.http import HttpRequest, JsonResponse
 from drf_yasg.utils import swagger_auto_schema
 from datetime import timedelta
 from django.utils import timezone
+from django.middleware.csrf import get_token, rotate_token
 
 from .Serializers import request_body, response_serializer
 from .my_decor import telegram_authenticated, check_user_exists
@@ -12,11 +13,11 @@ from .example import get_response_examples
 from .services import *
 from mysite.settings import price_per_change_team
 from .models import *
-from telegram import create_invoice_link
+from .input_validation import positive_integer
 
 
 @swagger_auto_schema(
-    methods=(['GET']),
+    methods=(['POST']),
     query_serializer=request_body.RefererAndCreateUser(),
     responses={
         '404': get_response_examples({'Error': 'Данные переданы некорректные.'}),
@@ -26,12 +27,11 @@ from telegram import create_invoice_link
     operation_summary='Cоздать пользователя',
 
 )
-@api_view(["GET"])
+@api_view(["POST"])
 async def create_my_session(request: HttpRequest):
-    await create_session(request)
-
-    if len(request.session.get("telegram_hash")) != 64 or "telegram_user" not in request.session:
-        return JsonResponse({"detail": "Missing Telegram Init Data"}, status=400)
+    failure = await create_session(request)
+    if failure is not None:
+        return failure
 
     tg_id = request.session["telegram_user"].get("id")
 
@@ -125,7 +125,10 @@ async def create_my_session(request: HttpRequest):
 
     await user.asave()
 
-    return JsonResponse({'Info': 'Success'}, status=200)
+    rotate_token(request)
+    response = JsonResponse({'Info': 'Success', 'csrf_token': get_token(request)}, status=200)
+    response['Cache-Control'] = 'no-store'
+    return response
 
 
 @swagger_auto_schema(
@@ -338,19 +341,28 @@ async def apply_traders_in_ofice(request: HttpRequest, *args, **kwargs):
     if not user_balance.my_ofice:
         return JsonResponse({'Error': 'У вас нет офиса'})
 
-    first_user_id_trader = request.data.get('first_user_id_trader')
-    second_user_id_trader = request.data.get('second_user_id_trader')
-    first_traders = await UserTraders.objects.filter(id=first_user_id_trader).afirst()
+    try:
+        first_user_id_trader = positive_integer(request.data.get('first_user_id_trader'))
+        second_user_id_trader = request.data.get('second_user_id_trader')
+        if second_user_id_trader is not None:
+            second_user_id_trader = positive_integer(second_user_id_trader)
+    except ValueError:
+        return JsonResponse({'Error': 'Invalid trader ID'}, status=400)
+    # Identity comes from the verified session, never the submitted object ID.
+    first_traders = await UserTraders.objects.filter(id=first_user_id_trader, user=user).afirst()
     if not first_traders:
         return JsonResponse({'Error': 'id first_user_id_trader передан не верно , такого трейдера у юзера нет'},
                             status=404)
 
     if first_user_id_trader and second_user_id_trader:
-        second_trader = await UserTraders.objects.filter(id=second_user_id_trader).afirst()
+        second_trader = await UserTraders.objects.filter(id=second_user_id_trader, user=user).afirst()
         if not second_trader:
             return JsonResponse({'Error': 'id second_user_id_trader передан не верно , такого трейдера у юзера нет'},
                                 status=404)
 
+        if (not await user_ofice.traders.filter(pk=first_traders.pk).aexists()
+                or await user_ofice.traders.filter(pk=second_trader.pk).aexists()):
+            return JsonResponse({'Error': 'Invalid replacement position'}, status=400)
         await user_ofice.traders.aremove(first_traders)
         await user_ofice.traders.aadd(second_trader)
         return JsonResponse({'Info': 'Success'}, status=200)
@@ -441,6 +453,8 @@ async def get_shop(request: HttpRequest, *args, **kwargs):
 @telegram_authenticated
 @check_user_exists
 async def get_invoice_link(request, *args, **kwargs):
+    # Import the bot only in the external payment path, not during checks/login.
+    from telegram import create_invoice_link
     user = kwargs.get('user')
     price = request.data.get('price')
 
@@ -479,8 +493,14 @@ async def buy_something(request, *args, **kwargs):
     user = kwargs.get('user')
 
     model = request.data.get('model')
-    count = int(request.data.get('count', 1))
-    id_products = request.data.get('id_products')
+    try:
+        count = positive_integer(request.data.get('count', 1))
+        id_products = positive_integer(request.data.get('id_products'))
+    except ValueError:
+        return JsonResponse({'Error': 'Invalid quantity or product ID'}, status=400)
+
+    if not isinstance(model, str) or model.lower() not in {'trader', 'ofice'}:
+        return JsonResponse({'Error': 'Invalid product model'}, status=400)
 
     if not model or not id_products:
         return JsonResponse({'Error': 'Не все ключи были переданы'}, status=404)
@@ -508,6 +528,8 @@ async def buy_something(request, *args, **kwargs):
 
     if model.lower() == 'ofice':
         ofice = await Ofice.objects.select_related('currency').filter(id=id_products).afirst()
+        if not ofice:
+            return JsonResponse({'Error': 'Данный продукт не найден'}, status=404)
         if not user_balance.my_ofice:
             return JsonResponse({'Error': 'У вас нет офиса'}, status=404)
         traders = user_balance.my_ofice.traders.all()

@@ -1,19 +1,25 @@
 from functools import wraps
 from django.http import JsonResponse
 from .models import User, UserBalance
+import time
+from asgiref.sync import sync_to_async
+from rest_framework.authentication import SessionAuthentication
 
 
 def telegram_authenticated(view_func):
     @wraps(view_func)
     async def _wrapped_view(request, *args, **kwargs):
-        telegram_hash = request.session.get("telegram_hash")
-        telegram_user = request.session.get("telegram_user")
-
-        if not telegram_hash or not telegram_user:
+        telegram_user = await request.session.aget('telegram_user')
+        verified = await request.session.aget('telegram_verified')
+        expires_at = await request.session.aget('telegram_expires_at', 0)
+        if (verified != 1 or not isinstance(telegram_user, dict)
+                or type(telegram_user.get('id')) is not int
+                or not isinstance(expires_at, (int, float)) or expires_at <= time.time()):
             return JsonResponse({"detail": "Unauthorized"}, status=401)
 
-        if len(telegram_hash) != 64:
-            return JsonResponse({"detail": "Unauthorized"}, status=401)
+        # DRF's default SessionAuthentication ignores our custom Telegram User.
+        # Explicitly enforce Django CSRF checks for cookie-authenticated writes.
+        await sync_to_async(SessionAuthentication().enforce_csrf)(request)
 
         # Добавляем данные Telegram в kwargs
         kwargs["telegram_user"] = telegram_user

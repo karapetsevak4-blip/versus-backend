@@ -28,7 +28,10 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DEBUG")
+DEBUG = os.getenv("DEBUG", "false").strip().lower() in {"1", "true", "yes"}
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+# Technical replay bound; keep the existing six-hour session lifetime.
+TELEGRAM_INIT_DATA_MAX_AGE = 6 * 60 * 60
 
 # ALLOWED_HOSTS = [host.strip() for host in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')]
 # cors_allowed = os.getenv('CORS_ALLOWED', 'http://localhost')

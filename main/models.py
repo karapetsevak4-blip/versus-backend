@@ -19,7 +19,7 @@ class User(models.Model):
     tg_last_name = models.CharField(null=True, blank=True, verbose_name='Телеграм Фамилия')
     photo_url = models.URLField(verbose_name='Фото', null=True, blank=True)
     first_visit = models.DateTimeField(default=get_moscow_time, verbose_name='Дата и время регистрации')
-    last_visit = models.DateField(default=date.today(), verbose_name='Дата последнего входа')
+    last_visit = models.DateField(default=date.today, verbose_name='Дата последнего входа')
     count_of_visit = models.IntegerField(default=1, verbose_name='сумма Количество заходов')
     visit_without_pass = models.IntegerField(default=1, verbose_name='Количество заходов без пропусков')
     is_baned = models.BooleanField(default=False)
@@ -154,7 +154,7 @@ def get_default_season():
     """Функция, которая будет вызываться при каждом создании объекта"""
     try:
         season = Season.objects.filter(active=True).first()
-        return season.pk
+        return season.pk if season else None
     except Season.DoesNotExist:
         return None
 
@@ -167,7 +167,7 @@ class TeamStats(models.Model):
     productivity_per_day = models.FloatField(default=0)
     total_players = models.IntegerField(default=0)
     total_traders = models.IntegerField(default=0)
-    date = models.DateTimeField(default=get_moscow_time())
+    date = models.DateTimeField(default=get_moscow_time)
 
     class Meta:
         verbose_name = 'Статистика Команд'

@@ -3,6 +3,9 @@ from django.http import JsonResponse
 import os
 import django
 import json
+import time
+from django.conf import settings
+from .telegram_auth import validate_init_data
 
 from .models import *
 
@@ -14,31 +17,30 @@ file_path_upgrade = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Da
 
 async def create_session(request):
     init_data = request.headers.get("Authorization")
-
-    if not init_data:
-        return JsonResponse({"detail": "Missing Telegram Init Data"}, status=400)
-
+    # Fail closed and remove any older identity before trying a new login.
+    for key in ('telegram_hash', 'telegram_user', 'telegram_verified', 'telegram_expires_at'):
+        await request.session.apop(key, None)
+    if not settings.TELEGRAM_BOT_TOKEN:
+        return JsonResponse({'detail': 'Telegram login is not configured'}, status=503)
     try:
-        init_data_dict = await transform_init_data(init_data)
-    except ValueError as e:
-        return JsonResponse({"detail": str(e)}, status=400)
-
-    if len(init_data_dict.get("hash")) != 64:
-        return JsonResponse({"detail": "Missing Telegram Init Data"}, status=400)
-
-    # Сохраняем хэш и данные пользователя в сессии
-    request.session["telegram_hash"] = init_data_dict.get("hash")
-    request.session["telegram_user"] = init_data_dict.get("user", {})
+        data = validate_init_data(init_data, settings.TELEGRAM_BOT_TOKEN,
+                                  settings.TELEGRAM_INIT_DATA_MAX_AGE)
+    except (ValueError, UnicodeError):
+        return JsonResponse({'detail': 'Invalid or expired Telegram data'}, status=401)
+    await request.session.acycle_key()
+    await request.session.aset('telegram_hash', data['hash'])
+    await request.session.aset('telegram_user', data['user'])
+    await request.session.aset('telegram_verified', 1)
+    expires_at = min(int(time.time()) + settings.SESSION_COOKIE_AGE,
+                     data['auth_date'] + settings.TELEGRAM_INIT_DATA_MAX_AGE)
+    await request.session.aset('telegram_expires_at', expires_at)
+    await request.session.aset_expiry(max(1, expires_at - int(time.time())))
 
 
 async def transform_init_data(init_data: str) -> dict:
-    try:
-        decoded_data = urllib.parse.unquote(init_data)
-        data = {k: v for k, v in (pair.split('=') for pair in decoded_data.split('&'))}
-        data['user'] = json.loads(data['user'])
-        return data
-    except Exception as e:
-        raise ValueError(f"Invalid Telegram Init Data format: {str(e)}")
+    # Kept for existing callers; parsing must never be mistaken for verification.
+    return validate_init_data(init_data, settings.TELEGRAM_BOT_TOKEN,
+                              settings.TELEGRAM_INIT_DATA_MAX_AGE)
 
 
 async def get_user_referral_layers(user):
