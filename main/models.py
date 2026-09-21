@@ -13,7 +13,7 @@ def get_moscow_time():
 
 
 class User(models.Model):
-    tg_id = models.BigIntegerField(verbose_name='Телеграм Ид')
+    tg_id = models.BigIntegerField(unique=True, verbose_name='Телеграм Ид')
     tg_username = models.CharField(verbose_name='Телеграм изернейм', null=True, blank=True)
     tg_first_name = models.CharField(null=True, blank=True, verbose_name='Телеграм Имя')
     tg_last_name = models.CharField(null=True, blank=True, verbose_name='Телеграм Фамилия')
@@ -51,6 +51,10 @@ class UserBalance(models.Model):
                                  related_name='user_team',
                                  verbose_name='Мой офис')
     my_bank = models.IntegerField(default=0, verbose_name='Мой Банк')
+    accrual_updated_at = models.DateTimeField(default=timezone.now, null=True, blank=True)
+    # Canonical exact fraction in [0, 1); strings avoid backend integer/float loss.
+    accrual_remainder_numerator = models.CharField(max_length=120, default='0')
+    accrual_remainder_denominator = models.CharField(max_length=120, default='1')
     earn_in_team_per_all_time = models.BigIntegerField(default=0, verbose_name='Всего денег')
     earn_in_team_per_month = models.BigIntegerField(default=0, verbose_name='Всего заработано в команде')
     earn_in_team_per_weak = models.IntegerField(default=0, verbose_name='Заработок за неделю')
@@ -87,6 +91,17 @@ class UserStatistics(models.Model):
             return f'user_tg_id:{self.user.tg_id},tg_username:{self.user.tg_username}'
         else:
             return ''
+
+
+class PurchaseReceipt(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='purchase_receipts')
+    key = models.CharField(max_length=128)
+    signature = models.CharField(max_length=100)
+    result = models.JSONField()
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user', 'key'], name='unique_player_purchase_key')]
 
 
 class Team(models.Model):

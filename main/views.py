@@ -1,6 +1,6 @@
 from adrf.decorators import api_view
 from asgiref.sync import sync_to_async
-from django.db.models import Sum
+from django.db.models import Sum, F
 from django.http import HttpRequest, JsonResponse
 from drf_yasg.utils import swagger_auto_schema
 from datetime import timedelta
@@ -14,6 +14,7 @@ from .services import *
 from mysite.settings import price_per_change_team
 from .models import *
 from .input_validation import positive_integer
+from . import gameplay, registration
 from .test_mode import require_financial_operations, initial_test_balance
 
 
@@ -30,104 +31,14 @@ from .test_mode import require_financial_operations, initial_test_balance
 )
 @api_view(["POST"])
 async def create_my_session(request: HttpRequest):
-    failure = await create_session(request)
-    if failure is not None:
-        return failure
-
-    tg_id = request.session["telegram_user"].get("id")
-
-    user = await User.objects.filter(tg_id=tg_id).afirst()
-
-    if user is None:
-        # Do not leave a half-created player when the new test database is empty.
-        ofice = await Ofice.objects.filter(lvl=1).afirst()
-        trader = await Traders.objects.filter(lvl=1).afirst()
-        if ofice is None or trader is None:
-            return JsonResponse({'detail': 'Starting game data is not configured'}, status=503)
-        referral_id = request.GET.get("refer_id")
-
-        tg_username = request.session["telegram_user"].get("username")
-        tg_first_name = request.session["telegram_user"].get("first_name")
-        tg_last_name = request.session["telegram_user"].get("last_name")
-        photo_url = request.session["telegram_user"].get("photo_url")
-        is_premium = request.session["telegram_user"].get("is_premium")
-        user = await User.objects.acreate(tg_id=tg_id, tg_username=tg_username, tg_first_name=tg_first_name,
-                                          tg_last_name=tg_last_name, photo_url=photo_url,
-                                          )
-        my_trader = await UserTraders.objects.acreate(user=user, trader=trader)
-
-        my_ofice = await UserOfice.objects.acreate(user=user, ofice=ofice)
-        user_balance = await UserBalance.objects.acreate(
-            user=user, my_ofice=my_ofice, **initial_test_balance(tg_id))
-
-        await my_ofice.traders.aadd(my_trader)
-        await UserStatistics.objects.acreate(user=user)
-        await user_balance.list_of_my_traders.aadd(my_trader)
-        if referral_id:
-            old_person = await User.objects.filter(tg_id=int(referral_id)).select_related('user_balance').afirst()
-            user_stats = await UserStatistics.objects.filter(user=old_person).afirst()
-            if (
-                    old_person
-                    and user != old_person
-            ):
-                user.referrer = old_person
-                user_stats.friends_are_inv += 1
-                old_person.user_balance.game_coin += 500
-                old_person.user_balance.earn_in_team_per_all_time += 500
-                old_person.user_balance.count_of_friends +=1
-                user_balance.game_coin += 500
-                user_balance.earn_in_team_per_all_time += 500
-                user_stats.received_coins_from_ref += 500
-                if is_premium:
-                    user_stats.received_coins_from_ref += 3000
-                    old_person.user_balance.game_coin += 3000
-                    user_balance.game_coin += 3000
-                    old_person.user_balance.earn_in_team_per_all_time += 3000
-                    user_balance.earn_in_team_per_all_time += 3000
-                await user_stats.asave()
-                await user_balance.asave()
-                await old_person.user_balance.asave()
-
-        await user.asave()
-
-        # TODO добавить трейдера(ов) если они есть в самом начале или выдать какие то деньги
-
-    # [await UserSocialTask.objects.acreate(user=user, social_task=task) async for task in
-    #  SocialTask.objects.all() if
-    #  not await UserSocialTask.objects.filter(user=user, social_task=task).select_related('user',
-    #                                                                                      'social_task').afirst()]
-    #
-    # [await UserTask.objects.acreate(user=user) async for task in
-    #  Task.objects.all() if
-    #  not await UserTask.objects.filter(user=user, task=task).select_related('user').afirst()]
-
-    today = date.today()
-    if today > user.last_visit:
-        user.can_take_daly_tasks = True
-        if user.last_visit < today - timedelta(days=1):
-            user.count_of_visit += 1
-            user.visit_without_pass = 1
-        else:
-            user.count_of_visit += 1
-            user.visit_without_pass += 1
-        user.last_visit = today
-        # TODO сделать обновление задач
-        if user.visit_without_pass >= 8:
-            user.visit_without_pass = 1
-            # async for user_weekly_task in UserTask.objects.filter(user=user, task__weekly=True).select_related(
-            #         'task').all():
-            #     ...
-            #     await user_weekly_task.asave()
-
-        # async for user_daly_task in UserTask.objects.filter(user=user, task__daily=True).select_related('task').all():
-        # user_daly_task.count_of_rase = 0
-        # user_daly_task.take_pts = 0
-        # user_daly_task.invite_friend = False
-        # user_daly_task.complete = False
-        # await user_daly_task.asave()
-
-    await user.asave()
-
+    data = await create_session(request)
+    if isinstance(data, JsonResponse):
+        return data
+    try:
+        await sync_to_async(registration.register_player)(data['user'], request.GET.get('refer_id'))
+    except registration.PlayerError as exc:
+        return JsonResponse({'detail': str(exc), 'code': exc.code}, status=exc.status)
+    await establish_session(request, data)
     rotate_token(request)
     response = JsonResponse({'Info': 'Success', 'csrf_token': get_token(request)}, status=200)
     response['Cache-Control'] = 'no-store'
@@ -149,20 +60,14 @@ async def create_my_session(request: HttpRequest):
 @telegram_authenticated
 @check_user_exists
 async def onboarding_apply_team(request: HttpRequest, *args, **kwargs):
-    user_balance = kwargs.get('user_balance')
-    team_id = request.data.get('team_id')
-    team = await Team.objects.filter(id=team_id).afirst()
-    statick_team = await TeamStats.objects.filter(team=team).afirst()
-    statick_team.total_players += 1
-    statick_team.total_traders += len([i async for i in user_balance.my_ofice.traders.all()])
-    await statick_team.asave()
-    if not user_balance.team:
-        user_balance.team = team
-        await user_balance.asave()
-        return JsonResponse({'Info': 'Success'}, status=200)
-    else:
-        return JsonResponse({'Error': 'Вы уже прошли онбординг'}, status=404)
-
+    try:
+        team_id = positive_integer(request.data.get('team_id'))
+        await sync_to_async(gameplay.choose_team)(kwargs['user'].pk, team_id)
+    except ValueError:
+        return JsonResponse({'Error': 'Invalid team ID'}, status=400)
+    except gameplay.GameplayError as exc:
+        return JsonResponse({'Error': str(exc)}, status=exc.status)
+    return JsonResponse({'Info': 'Success'})
 
 @swagger_auto_schema(
     methods=(['GET']),
@@ -178,19 +83,13 @@ async def onboarding_apply_team(request: HttpRequest, *args, **kwargs):
 @telegram_authenticated
 @check_user_exists
 async def main_page(request: HttpRequest, *args, **kwargs):
-    user = kwargs.get('user')
-    user_balance = kwargs.get('user_balance')
-
-    season = await Season.objects.select_related('first_team', 'second_team').alast()
-    my_traders = [i.id async for i in user_balance.my_ofice.traders.all()]
-    data = response_serializer.MainPageSerializer({
-        'season': season,
-        'user': user,
-        'user_balance': user_balance,
-    }, context={'my_traders': my_traders}).data
-
-    return JsonResponse(data, status=200)
-
+    try:
+        data = await sync_to_async(gameplay.main_snapshot)(kwargs['user'].pk)
+    except gameplay.GameplayError as exc:
+        return JsonResponse({'Error': str(exc)}, status=exc.status)
+    response = JsonResponse(data)
+    response['Cache-Control'] = 'no-store'
+    return response
 
 @swagger_auto_schema(
     methods=(["POST"]),
@@ -207,18 +106,10 @@ async def main_page(request: HttpRequest, *args, **kwargs):
 @check_user_exists
 async def apply_wallet(request: HttpRequest, *args, **kwargs):
     require_financial_operations()
-    user = kwargs.get('user')
-    wallet = request.data.get('wallet')
-
-    if not wallet:
-        return JsonResponse({'Error': 'Not wallet'}, status=404)
-
-    if wallet == 'None':
-        wallet = None
-
-    user.wallet_address = wallet
-    await user.asave()
-
+    try:
+        await sync_to_async(registration.change_wallet)(kwargs['user'].pk, request.data.get('wallet'))
+    except registration.PlayerError as exc:
+        return JsonResponse({'Error': str(exc), 'code': exc.code}, status=exc.status)
     return JsonResponse({'Info': 'success'}, status=200)
 
 
@@ -242,43 +133,13 @@ async def apply_wallet(request: HttpRequest, *args, **kwargs):
 @telegram_authenticated
 @check_user_exists
 async def change_team(request: HttpRequest, *args, **kwargs):
-    saeson = await Season.objects.alast()
-    user_balance = kwargs.get('user_balance')
-    today = timezone.now()
-    if not user_balance.team:
-        return JsonResponse({'Error': 'У вас нет команды'}, status=404)
-    if saeson.finish_time - today < timedelta(days=3):
-        return JsonResponse({'Error': 'Переход в другую команду меньше чем за 3 дня до окончания не возможен '},
-                            status=404)
-
-    currency = request.data.get('currency')
-    team_id = request.data.get('team_id')
-    new_team = await Team.objects.filter(id=team_id).afirst()
-    if currency.lower() == 'game_coin':
-        if user_balance.earn_in_team_per_month < 1:
-            return JsonResponse({'Error': 'У вас недостаточно денег для смена команды '},
-                                status=404)
-
-        user_balance.team.money_team -= user_balance.earn_in_team_per_month
-        user_balance.earn_in_team_per_month = int(user_balance.earn_in_team_per_month / 2)
-        new_team.money_team += user_balance.earn_in_team_per_month
-
-    if currency.lower() == 'token_money':
-        if user_balance.token_money > user_balance.price_per_change_team and user_balance.can_change_team_for_pay:
-            user_balance.token_money -= user_balance.price_per_change_team
-            user_balance.can_change_team_for_pay = False
-            user_balance.team.money_team -= user_balance.earn_in_team
-            new_team.money_team += user_balance.earn_in_team
-            user_balance.price_per_change_team *= 2
-        else:
-            return JsonResponse(
-                {'Error': 'Недотсаточно token_money или в этом сезоне вы уже меняли команду без потери прогресса'},
-                status=404)
-
-    await user_balance.team.asave()
-    user_balance.team = new_team
-    await user_balance.asave()
-    return JsonResponse({'Info': 'Команда успешно поменена'}, status=200)
+    # D02 contribution transfer/rounding is unresolved. The legacy paid path
+    # also references a nonexistent field. Do not let it bypass game locks or
+    # activate an unapproved economic rule while the replacement is prepared.
+    return JsonResponse({
+        'Error': 'Смена команды пока недоступна: правила переноса вклада ещё не утверждены',
+        'code': 'team_switch_rules_pending',
+    }, status=409)
 
 
 @swagger_auto_schema(
@@ -295,30 +156,13 @@ async def change_team(request: HttpRequest, *args, **kwargs):
 @telegram_authenticated
 @check_user_exists
 async def my_ofice(request: HttpRequest, *args, **kwargs):
-    user_balance = kwargs.get('user_balance')
-    user = kwargs.get('user')
-    user_ofice = await UserOfice.objects.prefetch_related('traders__trader', 'ofice').filter(user=user).afirst()
-    if not user_balance.my_ofice:
-        return JsonResponse({'Error': 'У вас нет офиса'})
-    salary = 0
-    len_of_traders = 0
-    for i in user_ofice.traders.all():
-        len_of_traders += 1
-        salary += i.trader.earn_for_day
-    print(salary)
-    claims = [item async for item in ClaimUserHistory.objects.filter(user=user).order_by('id')]
-    data = response_serializer.MyOficeSerializer({
-        'productivity_per_day': salary * (1 + user_balance.my_ofice.ofice.comfort),  # монеты в день
-        # 'total_coins_farmed': user_balance.earn_in_team_per_month,
-        'history_claims': claims,
-        'all': user_ofice.ofice.count_of_traders,
-        'occupied': len_of_traders,
-        'empty': (-1 if user_ofice.ofice.count_of_traders == -1
-                  else user_ofice.ofice.count_of_traders - len_of_traders),
-    }).data
-
-    return JsonResponse(data, status=200)
-
+    try:
+        data = await sync_to_async(gameplay.office_snapshot)(kwargs['user'].pk)
+    except gameplay.GameplayError as exc:
+        return JsonResponse({'Error': str(exc)}, status=exc.status)
+    response = JsonResponse(data)
+    response['Cache-Control'] = 'no-store'
+    return response
 
 @swagger_auto_schema(
     methods=(["POST"]),
@@ -340,47 +184,17 @@ async def my_ofice(request: HttpRequest, *args, **kwargs):
 @telegram_authenticated
 @check_user_exists
 async def apply_traders_in_ofice(request: HttpRequest, *args, **kwargs):
-    user_balance = kwargs.get('user_balance')
-    user = kwargs.get('user')
-    user_ofice = await UserOfice.objects.prefetch_related('traders__trader', 'ofice').filter(user=user).afirst()
-    if not user_balance.my_ofice:
-        return JsonResponse({'Error': 'У вас нет офиса'})
-
     try:
-        first_user_id_trader = positive_integer(request.data.get('first_user_id_trader'))
-        second_user_id_trader = request.data.get('second_user_id_trader')
-        if second_user_id_trader is not None:
-            second_user_id_trader = positive_integer(second_user_id_trader)
+        first = positive_integer(request.data.get('first_user_id_trader'))
+        second = request.data.get('second_user_id_trader')
+        if second is not None:
+            second = positive_integer(second)
+        await sync_to_async(gameplay.place_trader)(kwargs['user'].pk, first, second)
     except ValueError:
         return JsonResponse({'Error': 'Invalid trader ID'}, status=400)
-    # Identity comes from the verified session, never the submitted object ID.
-    first_traders = await UserTraders.objects.filter(id=first_user_id_trader, user=user).afirst()
-    if not first_traders:
-        return JsonResponse({'Error': 'id first_user_id_trader передан не верно , такого трейдера у юзера нет'},
-                            status=404)
-
-    if first_user_id_trader and second_user_id_trader:
-        second_trader = await UserTraders.objects.filter(id=second_user_id_trader, user=user).afirst()
-        if not second_trader:
-            return JsonResponse({'Error': 'id second_user_id_trader передан не верно , такого трейдера у юзера нет'},
-                                status=404)
-
-        if (not await user_ofice.traders.filter(pk=first_traders.pk).aexists()
-                or await user_ofice.traders.filter(pk=second_trader.pk).aexists()):
-            return JsonResponse({'Error': 'Invalid replacement position'}, status=400)
-        await user_ofice.traders.aremove(first_traders)
-        await user_ofice.traders.aadd(second_trader)
-        return JsonResponse({'Info': 'Success'}, status=200)
-    else:
-        traders = [trader async for trader in user_ofice.traders.all()]
-        if user_ofice.ofice.has_space(len(traders)) and first_traders not in traders:
-            await user_ofice.traders.aadd(first_traders)
-            return JsonResponse({'Info': 'Success'}, status=200)
-        else:
-            return JsonResponse(
-                {'Error': 'Не хватает места в данном офисе или этот трейдер уже используется у вас в офисе'},
-                status=404)
-
+    except gameplay.GameplayError as exc:
+        return JsonResponse({'Error': str(exc)}, status=exc.status)
+    return JsonResponse({'Info': 'Success'})
 
 @swagger_auto_schema(
     methods=(['POST']),
@@ -397,20 +211,11 @@ async def apply_traders_in_ofice(request: HttpRequest, *args, **kwargs):
 @telegram_authenticated
 @check_user_exists
 async def claim_bank(request: HttpRequest, *args, **kwargs):
-    user_balance = kwargs.get('user_balance')
-    user = kwargs.get('user')
-    if not user_balance.team:
-        return JsonResponse({'Error': 'У вас нет команды'}, status=404)
-    if user_balance.my_bank == 0:
-        return JsonResponse({'Error': 'У вас нет монет для сбора'}, status=404)
-    user_balance.game_coin += user_balance.my_bank
-    user_balance.earn_in_team_per_all_time += user_balance.my_bank
-    await ClaimUserHistory.objects.acreate(user=user, money=user_balance.my_bank)
-    user_balance.my_bank = 0
-    await user_balance.team.asave()
-    await user_balance.asave()
-    return JsonResponse({'Info': 'Операция прошла успешно'}, status=200)
-
+    try:
+        amount = await sync_to_async(gameplay.claim)(kwargs['user'].pk)
+    except gameplay.GameplayError as exc:
+        return JsonResponse({'Error': str(exc)}, status=exc.status)
+    return JsonResponse({'Info': 'Операция прошла успешно', 'claimed': amount})
 
 @swagger_auto_schema(
     methods=(['GET']),
@@ -493,72 +298,20 @@ async def get_invoice_link(request, *args, **kwargs):
 @telegram_authenticated
 @check_user_exists
 async def buy_something(request, *args, **kwargs):
-    user_balance = kwargs.get('user_balance')
-    user = kwargs.get('user')
-
-    model = request.data.get('model')
     try:
         count = positive_integer(request.data.get('count', 1))
-        id_products = positive_integer(request.data.get('id_products'))
+        product_id = positive_integer(request.data.get('id_products'))
+        model = request.data.get('model')
+        if not isinstance(model, str):
+            raise ValueError('Invalid product model')
+        result = await sync_to_async(gameplay.purchase)(
+            kwargs['user'].pk, model.lower(), product_id, count,
+            idempotency_key=request.headers.get('Idempotency-Key'))
     except ValueError:
         return JsonResponse({'Error': 'Invalid quantity or product ID'}, status=400)
-
-    if not isinstance(model, str) or model.lower() not in {'trader', 'ofice'}:
-        return JsonResponse({'Error': 'Invalid product model'}, status=400)
-
-    if not model or not id_products:
-        return JsonResponse({'Error': 'Не все ключи были переданы'}, status=404)
-
-    if model.lower() == 'trader':
-        trader = await Traders.objects.select_related('currency').filter(id=id_products).afirst()
-        if not trader:
-            return JsonResponse({'Error': 'Данный продукт не найден'}, status=404)
-
-        if trader.currency.name.lower() == 'stars' and user_balance.token_money >= trader.price * count:
-            for i in range(count):
-                user_trader = await UserTraders.objects.acreate(user=user, trader=trader)
-                await user_balance.list_of_my_traders.aadd(user_trader)
-            user_balance.token_money -= trader.price * count
-        elif trader.currency.name.lower() == 'coin' and user_balance.game_coin >= trader.price * count:
-            for i in range(count):
-                user_trader = await UserTraders.objects.acreate(user=user, trader=trader)
-                await user_balance.list_of_my_traders.aadd(user_trader)
-            user_balance.game_coin -= trader.price * count
-        else:
-            return JsonResponse({'Error': 'У вас недостаточно денег'}, status=404)
-
-        await user_balance.asave()
-        return JsonResponse({'Info': 'Трейдер удачно куплен'}, status=200)
-
-    if model.lower() == 'ofice':
-        ofice = await Ofice.objects.select_related('currency').filter(id=id_products).afirst()
-        if not ofice:
-            return JsonResponse({'Error': 'Данный продукт не найден'}, status=404)
-        if not user_balance.my_ofice:
-            return JsonResponse({'Error': 'У вас нет офиса'}, status=404)
-        traders = user_balance.my_ofice.traders.all()
-        if user_balance.my_ofice.ofice.lvl >= ofice.lvl:
-            return JsonResponse({'Error': 'Увровень вашего офиса больше или такой же'}, status=404)
-
-        if ofice.currency.name.lower() == 'stars' and user_balance.token_money >= ofice.price:
-            user_ofice = await UserOfice.objects.acreate(user=user, ofice=ofice)
-            user_balance.my_ofice = user_ofice
-            user_balance.token_money -= ofice.price
-        elif ofice.currency.name.lower() == 'coin' and user_balance.game_coin >= ofice.price:
-            user_ofice = await UserOfice.objects.acreate(user=user, ofice=ofice)
-            user_balance.my_ofice = user_ofice
-            user_balance.game_coin -= ofice.price
-        else:
-            return JsonResponse({'Error': 'У вас недостаточно денег'}, status=404)
-
-        await user_balance.my_ofice.traders.aadd(*traders)
-        await user_balance.asave()
-        last_user_ofice = await UserOfice.objects.filter(user=user).afirst()
-        await last_user_ofice.adelete()
-        return JsonResponse({'Info': 'Офис удачно куплен'}, status=200)
-    else:
-        return JsonResponse({'Error': 'Данные переданы некоректно'}, status=404)
-
+    except gameplay.GameplayError as exc:
+        return JsonResponse({'Error': str(exc)}, status=exc.status)
+    return JsonResponse(result)
 
 @swagger_auto_schema(
     methods=(['GET']),
@@ -861,17 +614,10 @@ async def info_person(request: HttpRequest, *args, **kwargs):
 @telegram_authenticated
 @check_user_exists
 async def change_nickname(request: HttpRequest, *args, **kwargs):
-    nickname = request.data['nickname']
-    user = kwargs.get('user')
-    exist_user = await User.objects.filter(tg_username__iexact=nickname).afirst()
-    if exist_user:
-        return JsonResponse({'Error': 'Данное имя уже занято'}, status=404)
-    if not nickname:
-        return JsonResponse({'Error': 'Данные не переданы'}, status=404)
-
-    user.tg_username = nickname
-    await user.asave()
-
+    try:
+        await sync_to_async(registration.change_nickname)(kwargs['user'].pk, request.data.get('nickname'))
+    except registration.PlayerError as exc:
+        return JsonResponse({'Error': str(exc), 'code': exc.code}, status=exc.status)
     return JsonResponse({'Info': 'NickName успешно заменен'}, status=200)
 
 
@@ -890,8 +636,8 @@ async def change_nickname(request: HttpRequest, *args, **kwargs):
 async def get_invite_link(request: HttpRequest, *args, **kwargs):
     user = kwargs.get('user')
     user_balance = kwargs.get('user_balance')
-    user_balance.count_of_share_invite_link += 1
-    await user_balance.asave()
+    await UserBalance.objects.filter(pk=user_balance.pk).aupdate(
+        count_of_share_invite_link=F('count_of_share_invite_link') + 1)
     return JsonResponse({'invite_link': f"{os.getenv('BOT_LINK')}?start=id_{user.tg_id}"}, status=200)
 
 

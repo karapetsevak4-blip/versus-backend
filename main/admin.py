@@ -52,14 +52,15 @@ class SeasonAdmin(admin.ModelAdmin):
                 user_balance.earn_in_team_per_weak = 0
                 user_balance.team = None
                 user_balance.can_change_team_for_pay = True
-                user_balance.save()
+                user_balance.save(update_fields=['earn_in_team_per_month', 'earn_in_team_per_weak',
+                                                  'team', 'can_change_team_for_pay'])
 
             for team in Team.objects.all():
                 team.money_team = 0
                 team.money_for_weak = 0
                 team.money_for_day = 0
                 team.boost_team = 1.0
-                team.save()
+                team.save(update_fields=['money_team', 'money_for_weak', 'money_for_day', 'boost_team'])
 
         finish = obj.finish_time
         if timezone.is_naive(finish):

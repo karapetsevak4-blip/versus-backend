@@ -20,6 +20,7 @@ django.setup()
 load_dotenv()
 from main.models import *
 from django.conf import settings
+from django.db.models import F
 from main.test_mode import closed_test_mode, telegram_user_allowed, require_financial_operations
 # from main.service import buy_something, upgrade_something
 
@@ -101,13 +102,13 @@ async def successful_payment(message: Message):
         season = await Season.objects.filter(active=True).afirst()
         transaction.completed = True
         user = transaction.user
-        user.user_balance.token_money += transaction.price
+        await UserBalance.objects.filter(pk=user.user_balance.pk).aupdate(
+            token_money=F('token_money') + transaction.price)
         await distribute_rewards(user.id,transaction.price)
 
         if season:
-            season.prize += int(transaction.price * 0.25)
-            await season.asave()
-        await transaction.user.user_balance.asave()
+            await Season.objects.filter(pk=season.pk).aupdate(
+                prize=F('prize') + int(transaction.price * 0.25))
         await transaction.asave()
 
     except Exception as e:
@@ -155,8 +156,8 @@ async def distribute_rewards(user_id, purchase_amount):
 
         reward = Decimal(purchase_amount) * LEVEL_PERCENTAGES[level]
 
-        referrer.user_balance.token_money += reward
-        await referrer.user_balance.asave(update_fields=['token_money'])
+        await UserBalance.objects.filter(pk=referrer.user_balance.pk).aupdate(
+            token_money=F('token_money') + reward)
 
         referrer = referrer.referrer
         level += 1

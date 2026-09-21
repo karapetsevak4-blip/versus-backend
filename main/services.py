@@ -17,10 +17,10 @@ file_path_upgrade = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Da
 
 
 async def create_session(request):
+    """Validate Telegram data; commit identity only after player initialization."""
     init_data = request.headers.get("Authorization")
-    # Fail closed and remove any older identity before trying a new login.
-    for key in ('telegram_hash', 'telegram_user', 'telegram_verified', 'telegram_expires_at'):
-        await request.session.apop(key, None)
+    # Persist revocation even if registration subsequently returns a 5xx.
+    await request.session.aflush()
     if not settings.TELEGRAM_BOT_TOKEN:
         return JsonResponse({'detail': 'Telegram login is not configured'}, status=503)
     try:
@@ -30,6 +30,10 @@ async def create_session(request):
         return JsonResponse({'detail': 'Invalid or expired Telegram data'}, status=401)
     if not telegram_user_allowed(data['user']['id']):
         return JsonResponse({'detail': 'Access is limited to test participants'}, status=403)
+    return data
+
+
+async def establish_session(request, data):
     await request.session.acycle_key()
     await request.session.aset('telegram_hash', data['hash'])
     await request.session.aset('telegram_user', data['user'])

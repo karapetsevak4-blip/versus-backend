@@ -78,3 +78,14 @@ class SeasonConfigurationTests(TestCase):
         season.refresh_from_db()
         self.assertTrue(season.active)
         self.assertIsNone(season.winner_id)
+
+    def test_zero_prize_season_without_participants_persists_loser_field(self):
+        # Exercises only the schema/save path; no payout calculation is run.
+        season = Season.objects.create(start_time=self.start - timedelta(days=2),
+                    finish_time=self.start - timedelta(days=1), first_team=self.a,
+                    second_team=self.b, active=True, prize=0)
+        finish_season(season.pk)
+        season.refresh_from_db()
+        self.assertFalse(season.active)
+        self.assertEqual((season.winner_id, season.losser_id), (self.a.pk, self.b.pk))
+        self.assertEqual(season.prize, 0)

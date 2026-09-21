@@ -216,7 +216,7 @@ class ClaimUserHistorySerializer(serializers.ModelSerializer):
 
 
 class MyOficeSerializer(serializers.Serializer):
-    productivity_per_day = serializers.IntegerField()
+    productivity_per_day = serializers.FloatField()
     history_claims = ClaimUserHistorySerializer(many=True, allow_null=True)
     all = serializers.IntegerField()
     occupied = serializers.IntegerField()

@@ -39,12 +39,15 @@ def check_user_exists(view_func):
     @wraps(view_func)
     async def _wrapped_view(request, *args, **kwargs):
         user = await User.objects.filter(tg_id=kwargs.get("telegram_user").get("id")).afirst()
+        if not user or user.is_baned:
+            return JsonResponse({"Error": "User unexist"}, status=404)
         user_balance = await UserBalance.objects.filter(user=user).select_related('user', 'team',
                                                                                   'my_ofice__ofice').prefetch_related(
             'my_ofice__traders__trader__currency',
             'list_of_my_traders__trader__currency').afirst()
-        if not user or user.is_baned == True:
-            return JsonResponse({"Error": "User unexist"}, status=404)
+        if not user_balance:
+            return JsonResponse({'Error': 'Состояние игрока неполное; требуется восстановление',
+                                 'code': 'player_state_incomplete'}, status=503)
 
         return await view_func(request, *args, **kwargs, user=user, user_balance=user_balance, )
 

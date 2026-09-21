@@ -1,6 +1,9 @@
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @shared_task(acks_late=True, reject_on_worker_lost=True)
@@ -44,63 +47,30 @@ def activate_team_boost():
             winner.boost_team = 1.0
             loser.money_for_weak = 0
             winner.money_for_weak = 0
-            loser.save()
-            winner.save()
+            loser.save(update_fields=['boost_team', 'money_for_weak'])
+            winner.save(update_fields=['boost_team', 'money_for_weak'])
             season.winner_of_weak = winner
             season.losser_of_weak = loser
-            season.save()
+            season.save(update_fields=['winner_of_weak', 'losser_of_weak'])
         print('Недельный бонус проигравшей команде активировался')
 
 
 @shared_task(acks_late=True, reject_on_worker_lost=True)
 def calculate_personal_money():
-    from .models import UserBalance, Transaction, UserOfice, Season, TeamStats
-    season = Season.objects.select_related('first_team', 'second_team').filter(active=True).last()
-    if season:
-        first_team = season.first_team
-        last_team = season.second_team
-        first_team.money_for_day = 0
-        last_team.money_for_day = 0
-        first_team.save()
-        last_team.save()
-        for user_balance in UserBalance.objects.select_related('team', 'user').all():
-            if not user_balance.team:
-                continue
-            boost = user_balance.team.boost_team
-            salary = 0
-            earn = 0
-            user_ofice = UserOfice.objects.prefetch_related('traders__trader').filter(user=user_balance.user).first()
-            for i in user_ofice.traders.all():
-                salary += i.trader.earn_for_day
-            transaction = Transaction.objects.filter(user=user_balance.user, completed=True).first()
-            if transaction and boost > 1.0:
-                earn = (salary * (1 + user_balance.my_ofice.ofice.comfort)) * boost
-            else:
-                earn = salary * (1 + user_balance.my_ofice.ofice.comfort)
-
-            max_value_for_bank = user_ofice.ofice.capacity_for(user_ofice.traders.count())
-
-            if user_balance.my_bank == max_value_for_bank:
-                earn = 0
-
-            elif user_balance.my_bank + earn < max_value_for_bank:
-                user_balance.my_bank += earn
-
-            else:
-                earn = (user_balance.my_bank + earn) - max_value_for_bank
-                user_balance.my_bank += earn
-
-            stats_team = TeamStats.objects.filter(team=user_balance.team).first()
-            stats_team.total_coins += earn
-            stats_team.save()
-            user_balance.earn_in_team_per_weak += earn
-            user_balance.save()
-            user_balance.team.money_for_day += earn
-            user_balance.team.money_for_weak += earn
-            user_balance.team.money_team += earn
-            user_balance.team.save()
-
-        print('Деньги удачно зачислены')
+    from .models import UserBalance
+    from .gameplay import settle, GameplayError
+    at = timezone.now()
+    # One shared cursor with API reads and claims. Retrying the task after a
+    # partial run cannot pay the already processed interval for a second time.
+    credited = 0
+    for user_id in UserBalance.objects.filter(team__isnull=False).values_list('user_id', flat=True).iterator():
+        try:
+            credited += settle(user_id, at=at)
+        except GameplayError:
+            # Bad catalog/player state is visible in logs and does not starve
+            # other players. Database failures still abort and can be retried.
+            logger.exception('Could not settle player balance %s', user_id)
+    return credited
 
 
 @shared_task
@@ -125,10 +95,10 @@ def finish_season(season_id):
 
     if t1.money_team > t2.money_team:
         season.winner = t1
-        season.loser = t2
+        season.losser = t2
     else:
         season.winner = t2
-        season.loser = t1
+        season.losser = t1
 
     full_prize = season.prize
     for user_balance in UserBalance.objects.filter(team=season.winner).order_by('earn_in_team_per_month').all():
@@ -136,14 +106,14 @@ def finish_season(season_id):
         prize = int(season.prize * (100 / procent))
         if prize > 5:
             user_balance.money_for_winner += prize
-            user_balance.save()
+            user_balance.save(update_fields=['money_for_winner'])
             full_prize -= prize
         else:
             season.prize = 0
             break
 
     season.active = False
-    season.save()
+    season.save(update_fields=['active', 'winner', 'losser', 'prize'])
 
 
 @shared_task(acks_late=True, reject_on_worker_lost=True)
@@ -160,7 +130,6 @@ def create_team_stats():
 
         total_traders = 0
         productivity_per_day = 0
-        traders_to_update = []
 
         user_balances = (
             UserBalance.objects
@@ -181,23 +150,13 @@ def create_team_stats():
                 person_salary += earn
                 total_traders += 1
 
-                user_trader.total += earn * comfort_bonus
-                traders_to_update.append(user_trader)
 
             productivity_per_day += person_salary * comfort_bonus
 
-        # Обновляем всех трейдеров одним запросом
-        if traders_to_update:
-            UserTraders.objects.bulk_update(traders_to_update, ['total'])
-
         TeamStats.objects.create(
             team=team,
-            total_coins=old_stats.total_coins if old_stats else 0,
-            productivity_per_day=(
-                old_stats.productivity_per_day / old_stats.total_players
-                if old_stats and old_stats.total_players != 0
-                else 0
-            ),
-            total_players=old_stats.total_players if old_stats else 0,
+            total_coins=team.money_team,
+            productivity_per_day=productivity_per_day,
+            total_players=user_balances.count(),
             total_traders=total_traders,
         )
