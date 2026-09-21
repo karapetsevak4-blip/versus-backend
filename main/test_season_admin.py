@@ -79,6 +79,25 @@ class SeasonConfigurationTests(TestCase):
         self.assertTrue(season.active)
         self.assertIsNone(season.winner_id)
 
+    def test_admin_future_season_creation_preserves_existing_progress(self):
+        player = User.objects.create(tg_id=900000021)
+        balance = UserBalance.objects.create(user=player, team=self.a,
+            earn_in_team_per_month=100, earn_in_team_per_weak=20,
+            my_bank=11, game_coin=70, can_change_team_for_pay=False)
+        future = self.start + timedelta(days=30)
+        obj = Season(start_time=future, finish_time=future + timedelta(days=14),
+                     first_team=self.a, second_team=self.b, active=True)
+        model_admin = SeasonAdmin(Season, AdminSite())
+        with patch('main.admin.finish_season.apply_async'):
+            with self.captureOnCommitCallbacks(execute=True):
+                model_admin.save_model(RequestFactory().post('/admin/'), obj, None, change=False)
+        balance.refresh_from_db()
+        self.a.refresh_from_db()
+        self.assertEqual((balance.team_id, balance.earn_in_team_per_month,
+            balance.earn_in_team_per_weak, balance.my_bank, balance.game_coin,
+            balance.can_change_team_for_pay, self.a.money_team),
+            (self.a.pk, 100, 20, 11, 70, False, 100))
+
     def test_zero_prize_season_without_participants_persists_loser_field(self):
         # Exercises only the schema/save path; no payout calculation is run.
         season = Season.objects.create(start_time=self.start - timedelta(days=2),

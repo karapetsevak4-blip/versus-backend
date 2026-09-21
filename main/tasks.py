@@ -118,45 +118,5 @@ def finish_season(season_id):
 
 @shared_task(acks_late=True, reject_on_worker_lost=True)
 def create_team_stats():
-    from .models import Team, TeamStats, UserBalance, Season, UserTraders
-
-    season = Season.objects.filter(active=True).first()
-    if not season:
-        return
-
-    for team in Team.objects.all():
-
-        old_stats = TeamStats.objects.filter(team=team).first()
-
-        total_traders = 0
-        productivity_per_day = 0
-
-        user_balances = (
-            UserBalance.objects
-            .filter(team=team)
-            .select_related('my_ofice__ofice')
-            .prefetch_related('my_ofice__traders__trader')
-        )
-
-        for person in user_balances:
-            office = person.my_ofice.ofice
-            comfort_bonus = 1 + office.comfort
-
-            person_salary = 0
-
-            for user_trader in person.my_ofice.traders.all():
-                earn = user_trader.trader.earn_for_day
-
-                person_salary += earn
-                total_traders += 1
-
-
-            productivity_per_day += person_salary * comfort_bonus
-
-        TeamStats.objects.create(
-            team=team,
-            total_coins=team.money_team,
-            productivity_per_day=productivity_per_day,
-            total_players=user_balances.count(),
-            total_traders=total_traders,
-        )
+    from .team_stats import snapshot_current_teams
+    return snapshot_current_teams(timezone.now())

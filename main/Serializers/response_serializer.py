@@ -111,7 +111,7 @@ class TeamSerializer(serializers.ModelSerializer):
     percent = serializers.SerializerMethodField()
     ear_per_minute = serializers.SerializerMethodField()
     boost_team = serializers.SerializerMethodField()
-    total_players = serializers.IntegerField(read_only=True)
+    total_players = serializers.SerializerMethodField()
     picture = serializers.SerializerMethodField()
 
     class Meta:
@@ -125,13 +125,23 @@ class TeamSerializer(serializers.ModelSerializer):
         return 0
 
     def get_ear_per_minute(self, obj):
-        return (obj.money_for_day / 1440) * obj.boost_team
+        return self._metrics(obj)['productivity_per_day'] / 1440
+
+    def _metrics(self, obj):
+        metrics = self.context.get('team_metrics', {}).get(obj.pk)
+        if metrics is None:
+            from ..team_stats import team_metrics
+            metrics = team_metrics(obj)[0]
+        return metrics
+
+    def get_total_players(self, obj):
+        return self._metrics(obj)['total_players']
 
     def get_boost_team(self, obj):
         if obj.boost_team == 1.0:
             return None
         else:
-            return int(str(obj.boost_team).split('.')[1])
+            return round((obj.boost_team - 1) * 100)
 
     def get_picture(self, obj):
         if not obj.picture:
@@ -151,7 +161,7 @@ class SeasonSerializer(serializers.ModelSerializer):
         fields = ['id', 'first_team', 'second_team', 'timer', 'prize']
 
     def get_timer(self, obj):
-        now = timezone.now()
+        now = self.context.get('at') or timezone.now()
         if obj.finish_time > now:  # Если таймер еще идет
             delta = obj.finish_time - now
             total_seconds = int(delta.total_seconds())
@@ -168,13 +178,17 @@ class SeasonSerializer(serializers.ModelSerializer):
         # Извлекаем компоненты
 
     def get_first_team(self, obj):
-        total_price = obj.first_team.money_team + obj.second_team.money_team
-        context = {'total_price': total_price}
+        if not obj.first_team:
+            return None
+        total_price = sum(team.money_team for team in (obj.first_team, obj.second_team) if team)
+        context = {**self.context, 'total_price': total_price}
         return TeamSerializer(obj.first_team, context=context).data
 
     def get_second_team(self, obj):
-        total_price = obj.first_team.money_team + obj.second_team.money_team
-        context = {'total_price': total_price}
+        if not obj.second_team:
+            return None
+        total_price = sum(team.money_team for team in (obj.first_team, obj.second_team) if team)
+        context = {**self.context, 'total_price': total_price}
         return TeamSerializer(obj.second_team, context=context).data
 
 

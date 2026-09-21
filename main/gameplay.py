@@ -9,12 +9,14 @@ from fractions import Fraction
 import re
 
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import F
 from django.utils import timezone
 
-from .models import (ClaimUserHistory, Ofice, PurchaseReceipt, Season, Team,
-                     TeamStats, Traders, Transaction, UserBalance, UserOfice,
+from .models import (ClaimUserHistory, Ofice, PurchaseReceipt, Team,
+                     Traders, Transaction, UserBalance, UserOfice,
                      UserTraders)
+from .season_state import relevant_season
+from .team_stats import refresh_team_snapshot, team_metrics
 
 MICROSECONDS_PER_DAY = 86_400_000_000
 MAX_PURCHASE_BATCH = 1000  # Resource bound per request, not an ownership limit.
@@ -111,10 +113,9 @@ def _settle_locked(balance, at):
     credited = 0
     # Existing balances have no reliable last calculation time. Initialize the
     # cursor without inventing retroactive production, retaining their bank.
-    season = (Season.objects.filter(active=True, start_time__lte=at)
-              .filter(Q(first_team_id=balance.team_id) | Q(second_team_id=balance.team_id))
-              .order_by('-start_time', '-pk').first()) if balance.team_id else None
-    if start and season:
+    season = relevant_season(at)
+    if (start and season and season.active and balance.team_id
+            in (season.first_team_id, season.second_team_id)):
         end = min(at, season.finish_time)
         start = max(start, season.start_time)
         remainder = _remainder(balance)
@@ -130,25 +131,18 @@ def _settle_locked(balance, at):
         if credited:
             balance.earn_in_team_per_month += credited
             balance.earn_in_team_per_weak += credited
-            # UPDATE locks the team until commit; no stale full-model saves.
-            Team.objects.filter(pk=balance.team_id).update(
-                money_team=F('money_team') + credited,
-                money_for_day=F('money_for_day') + credited,
-                money_for_weak=F('money_for_weak') + credited)
-            stats = (TeamStats.objects.filter(team_id=balance.team_id, season=season)
-                     .order_by('-date', '-pk').first())
-            if stats:
-                TeamStats.objects.filter(pk=stats.pk).update(
-                    total_coins=F('total_coins') + credited)
-            else:
-                TeamStats.objects.create(
-                    team_id=balance.team_id, season=season,
-                    total_coins=Team.objects.get(pk=balance.team_id).money_team,
-                    date=at)
     balance.save(update_fields=['my_bank', 'accrual_updated_at',
                                 'accrual_remainder_numerator',
                                 'accrual_remainder_denominator',
                                 'earn_in_team_per_month', 'earn_in_team_per_weak'])
+    if credited:
+        # Balance is saved before snapshot reads; UPDATE locks the team until
+        # commit and serializes every gameplay/snapshot writer for this team.
+        Team.objects.filter(pk=balance.team_id).update(
+            money_team=F('money_team') + credited,
+            money_for_day=F('money_for_day') + credited,
+            money_for_weak=F('money_for_weak') + credited)
+        refresh_team_snapshot(balance.team_id, season, at)
     return credited
 
 
@@ -191,12 +185,14 @@ def place_trader(user_id, first_id, second_id=None, at=None):
             raise GameplayError('Invalid replacement position')
     elif first_id in seated or not office.ofice.has_space(len(seated)):
         raise GameplayError('Нет свободного места или трейдер уже в офисе', 404)
-    _settle_locked(balance, at or timezone.now())
+    at = at or timezone.now()
+    _settle_locked(balance, at)
     if second_id is not None:
         office.traders.remove(first)
         office.traders.add(second)
     else:
         office.traders.add(first)
+    refresh_team_snapshot(balance.team_id, relevant_season(at), at)
 
 
 def _purchase_key(value):
@@ -236,7 +232,8 @@ def purchase(user_id, model, product_id, count=1, idempotency_key=None, at=None)
     office = _office(balance)
     if model == 'ofice' and office.ofice.lvl >= product.lvl:
         raise GameplayError('Уровень вашего офиса больше или такой же', 404)
-    _settle_locked(balance, at or timezone.now())
+    at = at or timezone.now()
+    _settle_locked(balance, at)
     if model == 'ofice':
         seated = list(office.traders.all())
         capacity = product.capacity_for(len(seated))
@@ -257,6 +254,7 @@ def purchase(user_id, model, product_id, count=1, idempotency_key=None, at=None)
     balance.save(update_fields=[field, 'my_ofice'])
     if model == 'ofice':
         office.delete()  # Exact replaced instance, inside the same transaction.
+        refresh_team_snapshot(balance.team_id, relevant_season(at), at)
     result = {'Info': 'Офис удачно куплен' if model == 'ofice' else 'Трейдер удачно куплен'}
     if key:
         PurchaseReceipt.objects.create(user_id=user_id, key=key, signature=signature, result=result)
@@ -269,34 +267,33 @@ def choose_team(user_id, team_id, at=None):
     if balance.team_id:
         raise GameplayError('Вы уже прошли онбординг', 404)
     at = at or timezone.now()
-    season = (Season.objects.filter(active=True, start_time__lte=at, finish_time__gt=at)
-              .filter(Q(first_team_id=team_id) | Q(second_team_id=team_id))
-              .order_by('-start_time', '-pk').first())
-    if not season:
+    season = relevant_season(at)
+    if (not season or not season.active or season.finish_time <= at
+            or team_id not in (season.first_team_id, season.second_team_id)):
         raise GameplayError('Команда не участвует в действующем сезоне', 409)
     Team.objects.select_for_update().get(pk=team_id)
     balance.team_id = team_id
     balance.accrual_updated_at = at  # No production before choosing a team.
     balance.save(update_fields=['team', 'accrual_updated_at'])
-    stats = TeamStats.objects.filter(team_id=team_id, season=season).order_by('-date', '-pk').first()
-    if stats is None:
-        stats = TeamStats.objects.create(team_id=team_id, season=season, date=at)
-    TeamStats.objects.filter(pk=stats.pk).update(
-        total_players=F('total_players') + 1,
-        total_traders=F('total_traders') + _office(balance).traders.count())
+    _office(balance)
+    refresh_team_snapshot(team_id, season, at)
 
 
 @transaction.atomic
 def main_snapshot(user_id, at=None):
     from .Serializers.response_serializer import MainPageSerializer
+    at = at or timezone.now()
     balance = _lock_balance(user_id)
-    _settle_locked(balance, at or timezone.now())
+    _settle_locked(balance, at)
     balance = (UserBalance.objects.select_related('user', 'team', 'my_ofice__ofice')
                .prefetch_related('my_ofice__traders__trader__currency',
                                  'list_of_my_traders__trader__currency').get(pk=balance.pk))
-    season = Season.objects.select_related('first_team', 'second_team').order_by('-start_time', '-pk').first()
+    season = relevant_season(at)
+    metrics = {team.pk: team_metrics(team)[0] for team in
+               (season.first_team, season.second_team) if team} if season else {}
     return MainPageSerializer({'season': season, 'user': balance.user, 'user_balance': balance},
-                              context={'my_traders': [t.pk for t in balance.my_ofice.traders.all()]}).data
+                              context={'my_traders': [t.pk for t in balance.my_ofice.traders.all()],
+                                       'team_metrics': metrics, 'at': at}).data
 
 
 @transaction.atomic

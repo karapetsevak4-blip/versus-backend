@@ -109,7 +109,8 @@ class AccrualIntegrationTests(AccrualFixture):
         self.balance.refresh_from_db(); self.team.refresh_from_db()
         self.assertEqual((self.balance.my_bank, self.balance.earn_in_team_per_month,
                           self.balance.earn_in_team_per_weak, self.team.money_team), (20, 20, 20, 20))
-        self.assertEqual(TeamStats.objects.get().total_coins, 20)
+        self.assertEqual(list(TeamStats.objects.order_by('snapshot_day')
+                              .values_list('total_coins', flat=True)), [10, 20])
 
     def test_office_comfort_fraction_survives_repeated_settlement(self):
         self.trader.earn_for_day = 35; self.trader.save()
@@ -254,7 +255,7 @@ class AccrualMigrationTests(TransactionTestCase):
     def test_existing_bank_is_preserved_without_retroactive_cursor(self):
         old = [('main', '0025_test_catalog_precision')]
         new = [('main', '0026_exact_accrual_and_purchase_receipts')]
-        latest = [('main', '0027_unique_telegram_identity')]
+        latest = [('main', '0028_team_snapshot_day')]
         executor = MigrationExecutor(connection)
         executor.migrate(old)
         try:

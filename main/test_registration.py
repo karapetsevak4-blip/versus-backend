@@ -146,6 +146,7 @@ class IdentityMigrationTests(TransactionTestCase):
     def test_duplicate_preflight_refuses_without_deleting_historical_records(self):
         old = [('main', '0026_exact_accrual_and_purchase_receipts')]
         new = [('main', '0027_unique_telegram_identity')]
+        latest = [('main', '0028_team_snapshot_day')]
         executor = MigrationExecutor(connection)
         executor.migrate(old)
         duplicate = None
@@ -170,4 +171,4 @@ class IdentityMigrationTests(TransactionTestCase):
             if duplicate is not None:
                 duplicate.tg_id = 900000100
                 duplicate.save(update_fields=['tg_id'])
-            MigrationExecutor(connection).migrate(new)
+            MigrationExecutor(connection).migrate(latest)

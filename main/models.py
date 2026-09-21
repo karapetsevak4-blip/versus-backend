@@ -178,15 +178,19 @@ class TeamStats(models.Model):
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='team_stats')
     season = models.ForeignKey("Season", on_delete=models.SET_NULL, null=True, blank=True, related_name='season_team',
                                default=get_default_season)
-    total_coins = models.IntegerField(default=0)
+    total_coins = models.BigIntegerField(default=0)
     productivity_per_day = models.FloatField(default=0)
     total_players = models.IntegerField(default=0)
     total_traders = models.IntegerField(default=0)
     date = models.DateTimeField(default=get_moscow_time)
+    # NULL identifies preserved legacy observations, never a guessed UTC day.
+    snapshot_day = models.DateField(null=True, blank=True)
 
     class Meta:
         verbose_name = 'Статистика Команд'
         verbose_name_plural = 'Статистика Команд'
+        constraints = [models.UniqueConstraint(
+            fields=['season', 'team', 'snapshot_day'], name='unique_team_season_utc_day')]
 
     if team:
         def __str__(self):
