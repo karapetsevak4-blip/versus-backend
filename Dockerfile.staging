@@ -1,0 +1,9 @@
+FROM python:3.12-slim-bookworm
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DJANGO_SETTINGS_MODULE=mysite.settings_staging
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY manage.py telegram.py ./
+COPY main ./main
+COPY mysite ./mysite
+CMD ["uvicorn", "mysite.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--no-access-log"]

@@ -6,6 +6,7 @@ import json
 import time
 from django.conf import settings
 from .telegram_auth import validate_init_data
+from .test_mode import telegram_user_allowed
 
 from .models import *
 
@@ -27,6 +28,8 @@ async def create_session(request):
                                   settings.TELEGRAM_INIT_DATA_MAX_AGE)
     except (ValueError, UnicodeError):
         return JsonResponse({'detail': 'Invalid or expired Telegram data'}, status=401)
+    if not telegram_user_allowed(data['user']['id']):
+        return JsonResponse({'detail': 'Access is limited to test participants'}, status=403)
     await request.session.acycle_key()
     await request.session.aset('telegram_hash', data['hash'])
     await request.session.aset('telegram_user', data['user'])

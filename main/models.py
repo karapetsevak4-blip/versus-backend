@@ -41,7 +41,7 @@ class User(models.Model):
 
 class UserBalance(models.Model):
     user = models.OneToOneField(User, related_name='user_balance', on_delete=models.CASCADE)
-    token_money = models.FloatField(default=0, verbose_name='Общий баланс донатной валюты')
+    token_money = models.DecimalField(max_digits=16, decimal_places=2, default=0, verbose_name='Общий баланс донатной валюты')
     game_coin = models.BigIntegerField(default=0, verbose_name='Игровая монета')
     team = models.ForeignKey('Team', null=True, blank=True, on_delete=models.SET_NULL, related_name='user_team',
                              verbose_name='Команда')
@@ -187,6 +187,7 @@ class Ofice(models.Model):
                                            null=True, blank=True)
     comfort = models.FloatField(verbose_name='Бонус к результату трейдеров')
     safe_capacity = models.IntegerField(verbose_name='Максимум очков, которые копятся до клейма')
+    safe_capacity_per_trader = models.PositiveIntegerField(default=0)
     price = models.IntegerField(verbose_name='Стоимость уровня', null=True, blank=True)
     currency = models.ForeignKey('Currency', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
                                  verbose_name='Тип валюты')
@@ -197,6 +198,12 @@ class Ofice(models.Model):
 
     def __str__(self):
         return f'lvl:{self.lvl},count_of_traders:{self.count_of_traders},price:{self.price}'
+
+    def capacity_for(self, occupied):
+        return self.safe_capacity + self.safe_capacity_per_trader * occupied
+
+    def has_space(self, occupied):
+        return self.count_of_traders == -1 or (self.count_of_traders is not None and occupied < self.count_of_traders)
 
 
 class UserOfice(models.Model):
@@ -220,7 +227,7 @@ class UserOfice(models.Model):
 class Traders(models.Model):
     name = models.CharField(default='Trader')
     earn_for_day = models.FloatField(verbose_name='Заработок за день')
-    price = models.IntegerField(verbose_name='Цена')
+    price = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Цена')
     lvl = models.IntegerField(verbose_name='Уровень', default=1)
     currency = models.ForeignKey('Currency', on_delete=models.SET_NULL, related_name='+', null=True, blank=True,
                                  verbose_name='Тип валюты')

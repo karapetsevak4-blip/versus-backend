@@ -78,7 +78,7 @@ def calculate_personal_money():
             else:
                 earn = salary * (1 + user_balance.my_ofice.ofice.comfort)
 
-            max_value_for_bank = user_ofice.ofice.safe_capacity
+            max_value_for_bank = user_ofice.ofice.capacity_for(user_ofice.traders.count())
 
             if user_balance.my_bank == max_value_for_bank:
                 earn = 0
@@ -105,6 +105,8 @@ def calculate_personal_money():
 
 @shared_task
 def finish_season(season_id):
+    from .test_mode import require_financial_operations
+    require_financial_operations()
     from .models import Season, UserBalance
 
     season = Season.objects.filter(id=season_id, active=True).first()

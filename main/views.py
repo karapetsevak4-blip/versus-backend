@@ -14,6 +14,7 @@ from .services import *
 from mysite.settings import price_per_change_team
 from .models import *
 from .input_validation import positive_integer
+from .test_mode import require_financial_operations, initial_test_balance
 
 
 @swagger_auto_schema(
@@ -38,6 +39,11 @@ async def create_my_session(request: HttpRequest):
     user = await User.objects.filter(tg_id=tg_id).afirst()
 
     if user is None:
+        # Do not leave a half-created player when the new test database is empty.
+        ofice = await Ofice.objects.filter(lvl=1).afirst()
+        trader = await Traders.objects.filter(lvl=1).afirst()
+        if ofice is None or trader is None:
+            return JsonResponse({'detail': 'Starting game data is not configured'}, status=503)
         referral_id = request.GET.get("refer_id")
 
         tg_username = request.session["telegram_user"].get("username")
@@ -48,14 +54,11 @@ async def create_my_session(request: HttpRequest):
         user = await User.objects.acreate(tg_id=tg_id, tg_username=tg_username, tg_first_name=tg_first_name,
                                           tg_last_name=tg_last_name, photo_url=photo_url,
                                           )
-        ofice = await Ofice.objects.filter(lvl=1).afirst()
-        trader = await Traders.objects.filter(lvl=1).afirst()
-        if not trader:
-            return JsonResponse({'Error': 'Create trader!'}, status=404)
         my_trader = await UserTraders.objects.acreate(user=user, trader=trader)
 
         my_ofice = await UserOfice.objects.acreate(user=user, ofice=ofice)
-        user_balance = await UserBalance.objects.acreate(user=user, my_ofice=my_ofice)
+        user_balance = await UserBalance.objects.acreate(
+            user=user, my_ofice=my_ofice, **initial_test_balance(tg_id))
 
         await my_ofice.traders.aadd(my_trader)
         await UserStatistics.objects.acreate(user=user)
@@ -203,6 +206,7 @@ async def main_page(request: HttpRequest, *args, **kwargs):
 @telegram_authenticated
 @check_user_exists
 async def apply_wallet(request: HttpRequest, *args, **kwargs):
+    require_financial_operations()
     user = kwargs.get('user')
     wallet = request.data.get('wallet')
 
@@ -309,7 +313,8 @@ async def my_ofice(request: HttpRequest, *args, **kwargs):
         'history_claims': claims,
         'all': user_ofice.ofice.count_of_traders,
         'occupied': len_of_traders,
-        'empty': user_ofice.ofice.count_of_traders - len_of_traders,
+        'empty': (-1 if user_ofice.ofice.count_of_traders == -1
+                  else user_ofice.ofice.count_of_traders - len_of_traders),
     }).data
 
     return JsonResponse(data, status=200)
@@ -368,9 +373,7 @@ async def apply_traders_in_ofice(request: HttpRequest, *args, **kwargs):
         return JsonResponse({'Info': 'Success'}, status=200)
     else:
         traders = [trader async for trader in user_ofice.traders.all()]
-        print(user_ofice.ofice.count_of_traders)
-        print(len(traders))
-        if user_ofice.ofice.count_of_traders > len(traders) and first_traders not in traders:
+        if user_ofice.ofice.has_space(len(traders)) and first_traders not in traders:
             await user_ofice.traders.aadd(first_traders)
             return JsonResponse({'Info': 'Success'}, status=200)
         else:
@@ -453,6 +456,7 @@ async def get_shop(request: HttpRequest, *args, **kwargs):
 @telegram_authenticated
 @check_user_exists
 async def get_invoice_link(request, *args, **kwargs):
+    require_financial_operations()
     # Import the bot only in the external payment path, not during checks/login.
     from telegram import create_invoice_link
     user = kwargs.get('user')

@@ -19,10 +19,12 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')
 django.setup()
 load_dotenv()
 from main.models import *
+from django.conf import settings
+from main.test_mode import closed_test_mode, telegram_user_allowed, require_financial_operations
 # from main.service import buy_something, upgrade_something
 
 # Bot token can be obtained via https://t.me/BotFather
-TOKEN = os.getenv("TELEGRAM_TOKEN")
+TOKEN = settings.TELEGRAM_BOT_TOKEN
 # Initialize Bot instance with default bot properties which will be passed to all API calls
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -34,6 +36,8 @@ payment_router = Router()
 
 @dp.message(CommandStart())
 async def handle_start(message: types.Message):
+    if not message.from_user or not telegram_user_allowed(message.from_user.id):
+        return
     command_parts = message.text.split()
     link=os.getenv('FRONT_URL')
     if len(command_parts) > 1:
@@ -58,6 +62,7 @@ async def handle_start(message: types.Message):
 
 
 async def create_invoice_link(price: int,id:int) -> str:
+    require_financial_operations()
     prices = [LabeledPrice(label='Donate', amount=price)]
     async with AiohttpSession() as session:
         bot = Bot(token=TOKEN, session=session)
@@ -75,12 +80,18 @@ async def create_invoice_link(price: int,id:int) -> str:
 
 @dp.pre_checkout_query()
 async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery):
+    if closed_test_mode():
+        await pre_checkout_query.answer(ok=False, error_message='Платежи на тестовом стенде отключены.')
+        return
     await pre_checkout_query.answer(ok=True)
 
 
 @payment_router.message(lambda message: message.successful_payment is not None)
 async def successful_payment(message: Message):
     """ Обрабатываем успешную оплату """
+    if closed_test_mode():
+        logging.error('Payment update received in closed test mode; financial processing blocked')
+        return
     payment_info: SuccessfulPayment = message.successful_payment
     payload = payment_info.invoice_payload
     order_id = payload.split(":")[1]  # Получаем ID заказа
@@ -105,7 +116,8 @@ async def successful_payment(message: Message):
 
 @dp.message(Command('refund'))
 async def commandrefund_handler(message: Message, bot: Bot, command: CommandObject):
-
+    if closed_test_mode():
+        return
     transaction_id = command.args
     try:
         await bot.refund_star_payment(
@@ -124,6 +136,7 @@ LEVEL_PERCENTAGES = [
 ]
 
 async def distribute_rewards(user_id, purchase_amount):
+    require_financial_operations()
     user = await User.objects.select_related(
         'user_balance', 'referrer__user_balance'
     ).aget(id=user_id)
@@ -151,8 +164,14 @@ async def distribute_rewards(user_id, purchase_amount):
 
 
 async def main() -> None:
+    if closed_test_mode():
+        identity = await bot.get_me()
+        if identity.id != settings.TELEGRAM_TEST_BOT_ID:
+            raise RuntimeError('Bot identity does not match the configured test bot')
+    webhook = await bot.get_webhook_info()
+    if webhook.url:
+        raise RuntimeError('Webhook is configured; polling will not change or delete it')
     dp.include_router(payment_router)
-    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 

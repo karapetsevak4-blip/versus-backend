@@ -4,6 +4,7 @@ from .models import User, UserBalance
 import time
 from asgiref.sync import sync_to_async
 from rest_framework.authentication import SessionAuthentication
+from .test_mode import telegram_user_allowed
 
 
 def telegram_authenticated(view_func):
@@ -16,6 +17,11 @@ def telegram_authenticated(view_func):
                 or type(telegram_user.get('id')) is not int
                 or not isinstance(expires_at, (int, float)) or expires_at <= time.time()):
             return JsonResponse({"detail": "Unauthorized"}, status=401)
+
+        # Recheck every request so removing a tester also revokes existing sessions.
+        if not telegram_user_allowed(telegram_user['id']):
+            await request.session.aflush()
+            return JsonResponse({'detail': 'Access is limited to test participants'}, status=403)
 
         # DRF's default SessionAuthentication ignores our custom Telegram User.
         # Explicitly enforce Django CSRF checks for cookie-authenticated writes.

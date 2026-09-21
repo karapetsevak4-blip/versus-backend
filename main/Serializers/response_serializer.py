@@ -25,6 +25,8 @@ class MainPAgeOficeSerializer(serializers.ModelSerializer):
 
 
 class TradersSerializer(serializers.ModelSerializer):
+    # Keep the existing JSON-number contract; calculations use database decimals.
+    price = serializers.FloatField(read_only=True)
     currency = CurrencySerializer()
     picture = serializers.SerializerMethodField()
 
@@ -65,7 +67,7 @@ class UserTradersSerializer(serializers.ModelSerializer):
 class OficeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ofice
-        fields = ['id', 'lvl', 'count_of_traders', 'comfort', 'safe_capacity']
+        fields = ['id', 'lvl', 'count_of_traders', 'comfort', 'safe_capacity', 'safe_capacity_per_trader', 'price']
 
 
 class FullMainPAgeOficeSerializer(serializers.ModelSerializer):
@@ -76,8 +78,14 @@ class FullMainPAgeOficeSerializer(serializers.ModelSerializer):
         model = UserOfice
         fields = ['id', 'ofice', 'traders']
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['ofice']['safe_capacity'] = instance.ofice.capacity_for(len(data['traders']))
+        return data
+
 
 class UserBalanceSerializer(serializers.ModelSerializer):
+    token_money = serializers.FloatField(read_only=True)
     team = MyTeamSerializer(allow_null=True)
     my_ofice = FullMainPAgeOficeSerializer()
     list_of_my_traders = UserTradersSerializer(many=True)
