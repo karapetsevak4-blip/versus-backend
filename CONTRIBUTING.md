@@ -2,6 +2,12 @@
 
 ## Branches
 
+Current handoff (1 October 2026): continue from `feat/current-game`. The original
+`main` and earlier `develop` are preserved. Start follow-up branches from this
+working branch until the owner approves integration into `develop`.
+See [DEVELOPER_HANDOFF.md](DEVELOPER_HANDOFF.md).
+
+
 - `main` — accepted release history; no direct pushes.
 - `develop` — integration branch for the test environment.
 - `feat/<short-name>` — product functionality.
@@ -9,7 +15,7 @@
 - `chore/<short-name>` — tooling or maintenance.
 - `docs/<short-name>` — documentation only.
 
-Create a short-lived branch from an up-to-date `develop`. Keep unrelated work
+After handoff integration, create a short-lived branch from an up-to-date `develop`. Keep unrelated work
 in separate pull requests.
 
 ## Commits

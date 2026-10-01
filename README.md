@@ -5,13 +5,15 @@ Mini App.
 
 ## Status
 
-The project is being stabilized for a first release candidate. `main` preserves
-the verified upstream baseline; active work is integrated into `develop`.
+The current developer handoff is on `feat/current-game` (1 October 2026).
+`main` preserves the original supplied code; `develop` retains the earlier
+September integration checkpoint. See [DEVELOPER_HANDOFF.md](DEVELOPER_HANDOFF.md)
+for the current source map, archive tags, verification and remaining work.
 The application and payment paths are not production-ready.
 
 ## Stack
 
-- Python 3.12 and Django 5.1
+- Python 3.12 and Django 5.2.17
 - Django REST Framework / ADRF
 - PostgreSQL 15
 - Redis and Celery
