@@ -1,7 +1,12 @@
 from django.urls import path
 from .views import *
+from . import ui_views
 
 urlpatterns = [
+    path('player_ui/', ui_views.player_ui),
+    path('tasks_ui/', ui_views.tasks_ui),
+    path('history_ui/', ui_views.history_ui),
+    path('community_ui/', ui_views.community_ui),
     path('create_session/',create_my_session),
     path('main_page/',main_page),
     path('onboarding_apply_team/',onboarding_apply_team),

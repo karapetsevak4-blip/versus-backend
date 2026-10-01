@@ -255,7 +255,7 @@ class AccrualMigrationTests(TransactionTestCase):
     def test_existing_bank_is_preserved_without_retroactive_cursor(self):
         old = [('main', '0025_test_catalog_precision')]
         new = [('main', '0026_exact_accrual_and_purchase_receipts')]
-        latest = [('main', '0028_team_snapshot_day')]
+        latest = MigrationExecutor(connection).loader.graph.leaf_nodes()
         executor = MigrationExecutor(connection)
         executor.migrate(old)
         try:

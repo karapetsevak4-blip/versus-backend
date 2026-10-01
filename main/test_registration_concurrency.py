@@ -63,11 +63,11 @@ class RegistrationConcurrencyTests(RegistrationFixture):
         player = User.objects.get(tg_id=self.metadata['id'])
         self.assertEqual(player.referrer_id, inviter.pk)
         balance = UserBalance.objects.get(user=player)
-        self.assertEqual((balance.game_coin, balance.token_money), (10500, 1000))
+        self.assertEqual((balance.game_coin, balance.token_money), (10000, 1000))
         self.assertEqual((UserOfice.objects.filter(user=player).count(),
                           UserTraders.objects.filter(user=player).count(),
                           UserStatistics.objects.filter(user=player).count()), (1, 1, 1))
-        self.assertEqual(UserBalance.objects.get(user=inviter).game_coin, 500)
+        self.assertEqual(UserBalance.objects.get(user=inviter).game_coin, 0)
         self.assertEqual(UserStatistics.objects.get(user=inviter).friends_are_inv, 1)
 
     def test_two_logins_increment_new_day_once(self):

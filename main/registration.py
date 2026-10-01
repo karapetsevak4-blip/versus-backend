@@ -49,20 +49,10 @@ def _complete_balance(user):
 
 
 def _grant_referral(user, balance, referrer, is_premium):
-    referrer_balance = _complete_balance(referrer)
-    # Preserve the existing non-financial signup rule in this integrity fix.
-    # This does not approve it as the final RC06/RC08 reward policy.
-    reward = 3500 if is_premium else 500
-    UserStatistics.objects.filter(user=referrer).update(
-        friends_are_inv=F('friends_are_inv') + 1,
-        received_coins_from_ref=F('received_coins_from_ref') + reward)
-    UserBalance.objects.filter(pk=balance.pk).update(
-        game_coin=F('game_coin') + reward,
-        earn_in_team_per_all_time=F('earn_in_team_per_all_time') + reward)
-    UserBalance.objects.filter(pk=referrer_balance.pk).update(
-        game_coin=F('game_coin') + reward,
-        earn_in_team_per_all_time=F('earn_in_team_per_all_time') + reward,
-        count_of_friends=F('count_of_friends') + 1)
+    # D07/D08: registration links the tree but grants no signup currency.
+    _complete_balance(referrer)
+    UserStatistics.objects.filter(user=referrer).update(friends_are_inv=F('friends_are_inv') + 1)
+    UserBalance.objects.filter(user=referrer).update(count_of_friends=F('count_of_friends') + 1)
     user.referrer = referrer
     user.save(update_fields=['referrer'])
 

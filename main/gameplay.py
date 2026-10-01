@@ -166,6 +166,8 @@ def claim(user_id, at=None):
     balance.my_bank = 0
     balance.save(update_fields=['game_coin', 'earn_in_team_per_all_time', 'my_bank'])
     ClaimUserHistory.objects.create(user_id=user_id, money=amount, datatime=at)
+    from .ui_state import on_claim
+    on_claim(balance, at)
     return amount
 
 
@@ -192,6 +194,8 @@ def place_trader(user_id, first_id, second_id=None, at=None):
         office.traders.add(second)
     else:
         office.traders.add(first)
+    from .ui_state import on_placement
+    on_placement(balance, at)
     refresh_team_snapshot(balance.team_id, relevant_season(at), at)
 
 
@@ -204,7 +208,7 @@ def _purchase_key(value):
 
 
 @transaction.atomic
-def purchase(user_id, model, product_id, count=1, idempotency_key=None, at=None):
+def purchase(user_id, model, product_id, count=1, idempotency_key=None, at=None, expected_price=None, expected_currency=None):
     if model not in ('trader', 'ofice') or type(count) is not int or not 1 <= count <= MAX_PURCHASE_BATCH:
         raise GameplayError('Invalid product or quantity (maximum 1000 per request)')
     if model == 'ofice' and count != 1:
@@ -223,8 +227,20 @@ def purchase(user_id, model, product_id, count=1, idempotency_key=None, at=None)
     if not product or not product.currency or product.price is None:
         raise GameplayError('Данный продукт не найден', 404)
     price = Decimal(str(product.price)) * count
+    if expected_price is not None:
+        try:
+            quoted = Decimal(str(expected_price))
+            if not quoted.is_finite() or quoted < 0:
+                raise ValueError()
+        except (ValueError, ArithmeticError):
+            raise GameplayError('Invalid quoted price')
+        if price != quoted:
+            raise GameplayError('Price changed. Refresh the store and review the new total.', 409)
     currency = product.currency.name.lower()
     field = {'stars': 'token_money', 'coin': 'game_coin'}.get(currency)
+    actual_currency = 'credits' if field == 'token_money' else 'Coins' if field == 'game_coin' else None
+    if expected_currency is not None and expected_currency != actual_currency:
+        raise GameplayError('Currency changed. Refresh the store before confirming.', 409)
     if price < 0 or not field or (field == 'game_coin' and price != int(price)):
         raise GameplayError('Некорректная цена каталога', 409)
     if getattr(balance, field) < price:
@@ -255,7 +271,10 @@ def purchase(user_id, model, product_id, count=1, idempotency_key=None, at=None)
     if model == 'ofice':
         office.delete()  # Exact replaced instance, inside the same transaction.
         refresh_team_snapshot(balance.team_id, relevant_season(at), at)
-    result = {'Info': 'Офис удачно куплен' if model == 'ofice' else 'Трейдер удачно куплен'}
+    result = {'Info': 'Офис удачно куплен' if model == 'ofice' else 'Трейдер удачно куплен',
+              'trader_ids': [t.pk for t in bought] if model == 'trader' else [],
+              'amount': str(price), 'currency': 'credits' if field == 'token_money' else 'Coins',
+              'item': f'L{product.lvl} trader' if model == 'trader' else f'Office level {product.lvl}'}
     if key:
         PurchaseReceipt.objects.create(user_id=user_id, key=key, signature=signature, result=result)
     return result

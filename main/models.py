@@ -365,3 +365,36 @@ class Transaction(models.Model):
             return f'id:{self.id},tg_id:{self.user.tg_id},model:{self.model},completed:{self.completed},price:{self.price}'
         else:
             return ''
+
+
+class PlayerGuide(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='guide')
+    version = models.PositiveIntegerField(default=1)
+    status = models.CharField(max_length=16, default='welcome')
+    step = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class OperationReceipt(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    key = models.CharField(max_length=128)
+    signature = models.CharField(max_length=180)
+    result = models.JSONField()
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user', 'key'], name='unique_player_operation_key')]
+
+
+class TaskReward(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='task_rewards')
+    season = models.ForeignKey(Season, null=True, on_delete=models.PROTECT)
+    key = models.CharField(max_length=80)
+    kind = models.CharField(max_length=16)
+    amount = models.DecimalField(max_digits=5, decimal_places=2)
+    ready_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField(null=True)
+    claimed_at = models.DateTimeField(null=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user', 'key'], name='unique_player_task_reward')]

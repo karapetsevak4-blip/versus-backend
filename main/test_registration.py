@@ -68,8 +68,8 @@ class RegistrationTests(RegistrationFixture):
         registration.register_player(self.metadata, another.tg_id, self.at)
         player.refresh_from_db()
         self.assertEqual(player.referrer_id, inviter.pk)
-        self.assertEqual(UserBalance.objects.get(user=inviter).game_coin, 500)
-        self.assertEqual(UserBalance.objects.get(user=player).game_coin, 500)
+        self.assertEqual(UserBalance.objects.get(user=inviter).game_coin, 0)
+        self.assertEqual(UserBalance.objects.get(user=player).game_coin, 0)
         self.assertEqual(UserBalance.objects.get(user=another).game_coin, 0)
         self.assertEqual(UserStatistics.objects.get(user=inviter).friends_are_inv, 1)
 
@@ -146,7 +146,7 @@ class IdentityMigrationTests(TransactionTestCase):
     def test_duplicate_preflight_refuses_without_deleting_historical_records(self):
         old = [('main', '0026_exact_accrual_and_purchase_receipts')]
         new = [('main', '0027_unique_telegram_identity')]
-        latest = [('main', '0028_team_snapshot_day')]
+        latest = MigrationExecutor(connection).loader.graph.leaf_nodes()
         executor = MigrationExecutor(connection)
         executor.migrate(old)
         duplicate = None

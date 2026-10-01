@@ -215,4 +215,4 @@ class SnapshotMigrationTests(TransactionTestCase):
             self.assertEqual(list(TeamStats.objects.order_by('pk').values_list(
                 'total_coins', 'snapshot_day')), [(7, None), (9, None)])
         finally:
-            MigrationExecutor(connection).migrate(new)
+            MigrationExecutor(connection).migrate(MigrationExecutor(connection).loader.graph.leaf_nodes())

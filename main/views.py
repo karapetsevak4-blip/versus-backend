@@ -14,7 +14,7 @@ from .services import *
 from mysite.settings import price_per_change_team
 from .models import *
 from .input_validation import positive_integer
-from . import gameplay, registration
+from . import gameplay, registration, ui_state
 from .test_mode import require_financial_operations, initial_test_balance
 
 
@@ -133,12 +133,12 @@ async def apply_wallet(request: HttpRequest, *args, **kwargs):
 @telegram_authenticated
 @check_user_exists
 async def change_team(request: HttpRequest, *args, **kwargs):
-    # D02 contribution transfer/rounding is unresolved. The legacy paid path
+    # Accepted D02 needs a season contribution ledger before enabling switching. The legacy paid path
     # also references a nonexistent field. Do not let it bypass game locks or
-    # activate an unapproved economic rule while the replacement is prepared.
+    # activate the legacy paid rule while the accepted replacement is prepared.
     return JsonResponse({
-        'Error': 'Смена команды пока недоступна: правила переноса вклада ещё не утверждены',
-        'code': 'team_switch_rules_pending',
+        'Error': 'Смена команды временно недоступна. Ваш вклад и имущество сохранены.',
+        'code': 'team_switch_unavailable',
     }, status=409)
 
 
@@ -189,7 +189,8 @@ async def apply_traders_in_ofice(request: HttpRequest, *args, **kwargs):
         second = request.data.get('second_user_id_trader')
         if second is not None:
             second = positive_integer(second)
-        await sync_to_async(gameplay.place_trader)(kwargs['user'].pk, first, second)
+        await sync_to_async(ui_state.operation)(kwargs['user'].pk, request.headers.get('Idempotency-Key'),
+            f'place:{first}:{second}', lambda: (gameplay.place_trader(kwargs['user'].pk, first, second) or {'Info': 'Success'}))
     except ValueError:
         return JsonResponse({'Error': 'Invalid trader ID'}, status=400)
     except gameplay.GameplayError as exc:
@@ -212,10 +213,11 @@ async def apply_traders_in_ofice(request: HttpRequest, *args, **kwargs):
 @check_user_exists
 async def claim_bank(request: HttpRequest, *args, **kwargs):
     try:
-        amount = await sync_to_async(gameplay.claim)(kwargs['user'].pk)
+        result = await sync_to_async(ui_state.operation)(kwargs['user'].pk, request.headers.get('Idempotency-Key'),
+            'claim', lambda: {'Info': 'Coins collected', 'claimed': gameplay.claim(kwargs['user'].pk)})
     except gameplay.GameplayError as exc:
         return JsonResponse({'Error': str(exc)}, status=exc.status)
-    return JsonResponse({'Info': 'Операция прошла успешно', 'claimed': amount})
+    return JsonResponse(result)
 
 @swagger_auto_schema(
     methods=(['GET']),
@@ -306,7 +308,8 @@ async def buy_something(request, *args, **kwargs):
             raise ValueError('Invalid product model')
         result = await sync_to_async(gameplay.purchase)(
             kwargs['user'].pk, model.lower(), product_id, count,
-            idempotency_key=request.headers.get('Idempotency-Key'))
+            idempotency_key=request.headers.get('Idempotency-Key'), expected_price=request.data.get('expected_price'),
+            expected_currency=request.data.get('expected_currency'))
     except ValueError:
         return JsonResponse({'Error': 'Invalid quantity or product ID'}, status=400)
     except gameplay.GameplayError as exc:
@@ -502,10 +505,10 @@ async def change_nickname(request: HttpRequest, *args, **kwargs):
 @check_user_exists
 async def get_invite_link(request: HttpRequest, *args, **kwargs):
     user = kwargs.get('user')
-    user_balance = kwargs.get('user_balance')
-    await UserBalance.objects.filter(pk=user_balance.pk).aupdate(
-        count_of_share_invite_link=F('count_of_share_invite_link') + 1)
-    return JsonResponse({'invite_link': f"{os.getenv('BOT_LINK')}?start=id_{user.tg_id}"}, status=200)
+    bot_link = os.getenv('BOT_LINK', '')
+    if not bot_link.startswith('https://t.me/'):
+        return JsonResponse({'Error': 'Invite link is not configured'}, status=503)
+    return JsonResponse({'invite_link': f"{bot_link}?start=id_{user.tg_id}"}, status=200)
 
 
 @swagger_auto_schema(

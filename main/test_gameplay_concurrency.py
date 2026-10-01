@@ -124,3 +124,32 @@ class GameplayConcurrencyTests(AccrualFixture):
         self.balance.refresh_from_db()
         self.assertEqual(self.balance.token_money, 1000)
         self.assertEqual(UserTraders.objects.filter(user=self.user).count(), 1)
+
+    def test_parallel_task_reward_is_credited_once(self):
+        from . import ui_state
+        from .models import TaskReward
+        reward = ui_state.ready_task(self.user.pk, 'office', 'office:parallel', self.at)
+        outcomes = self.race(*(lambda: ui_state.claim_task(self.user.pk, reward.pk) for _ in range(2)))
+        self.assertEqual(outcomes, ['ok', 'ok'])
+        self.balance.refresh_from_db()
+        self.assertEqual(self.balance.token_money, 1001)
+        self.assertEqual(TaskReward.objects.filter(claimed_at__isnull=False).count(), 1)
+
+    def test_parallel_operation_receipt_returns_same_collection(self):
+        from . import ui_state
+        from .models import OperationReceipt
+        at = self.at + timedelta(days=1)
+        operation = lambda: ui_state.operation(self.user.pk, 'parallel-claim-1', 'claim',
+                                               lambda: {'claimed': gameplay.claim(self.user.pk, at)})
+        self.assertEqual(self.race(operation, operation), ['ok', 'ok'])
+        self.balance.refresh_from_db()
+        self.assertEqual(self.balance.game_coin, 20)
+        self.assertEqual(OperationReceipt.objects.count(), 1)
+
+    def test_parallel_placement_retry_uses_one_seat(self):
+        from . import ui_state
+        trader = UserTraders.objects.create(user=self.user, trader=self.trader)
+        operation = lambda: ui_state.operation(self.user.pk, 'parallel-place-1', f'place:{trader.pk}',
+            lambda: gameplay.place_trader(self.user.pk, trader.pk, at=self.at) or {'Info': 'Success'})
+        self.assertEqual(self.race(operation, operation), ['ok', 'ok'])
+        self.assertEqual(self.office.traders.count(), 2)
